@@ -15,4 +15,7 @@ router.post('/toggle-lock', restrictTo('admin'), gradeController.toggleTermLock)
 // Route to view a comprehensive student dashboard overview grouped by term and annual averages
 router.get('/student/:studentId/academic-profile', restrictTo('admin', 'teacher', 'student'), gradeController.getStudentAcademicProfile);
 
+// NEW: Route to fetch dynamic class performance metrics (e.g., class size strength and positioning)
+router.get('/class-metrics', restrictTo('admin', 'teacher'), gradeController.getClassPerformanceMetrics);
+
 module.exports = router;

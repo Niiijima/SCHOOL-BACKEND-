@@ -30,7 +30,24 @@ const gradeSchema = new mongoose.Schema({
     // System-generated totals and outcomes
     totalScore: { type: Number },
     grade: { type: String },
-    remark: { type: String }
+    remark: { type: String },
+
+    // Report Card Comments matching the provided template
+    teacherComment: { 
+        type: String, 
+        default: "" // e.g., "There is room for improvement"
+    },
+    principalComment: { 
+        type: String, 
+        default: "" // e.g., "Work harder."
+    },
+
+    // NEW OVERRIDE: Allows a teacher or admin to manually type and edit the class count
+    manualNoInClass: {
+        type: Number,
+        default: null,
+        min: 0
+    }
 }, { 
     timestamps: true 
 });
