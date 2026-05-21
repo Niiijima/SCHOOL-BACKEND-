@@ -1,33 +1,42 @@
 const mongoose = require('mongoose');
 
-// Define the blueprint for the Student collection in MongoDB
-const StudentSchema = new mongoose.Schema({
-    name: { 
-        type: String, 
-        required: true 
-    },
-    email: { 
-        type: String, 
-        required: true, 
-        unique: true 
-    },
-    phone: { 
-        type: String, 
-        required: true 
-    },
-    profileImage: { 
-        type: String, 
-        default: "" 
-    },
-    // Restrict status to specific allowed choices with a default fallback
-    enrollmentStatus: { 
-        type: String, 
-        enum: ['Active', 'Inactive', 'Suspended', 'Graduated'], 
-        default: 'Active' 
-    }
+const studentSchema = new mongoose.Schema({
+  // Link to the core login account
+  user: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: [true, 'A student profile must belong to a registered user account.']
+  },
+  name: { 
+    type: String, 
+    required: [true, 'Please provide the student name'] 
+  },
+  admissionNumber: {
+    type: String,
+    required: [true, 'Please provide an admission number'],
+    unique: true,
+    trim: true
+  },
+  currentClass: {
+    type: String,
+    required: [true, 'Please assign a class arm (e.g., SSS 1 A, JSS 3 B)'],
+    trim: true
+  },
+  gender: {
+    type: String,
+    enum: ['Male', 'Female'],
+    required: true
+  },
+  dateOfBirth: { type: Date },
+  guardianName: { type: String, trim: true },
+  guardianPhone: { type: String, trim: true },
+  status: { 
+    type: String, 
+    enum: ['active', 'graduated', 'withdrawn'], 
+    default: 'active' 
+  }
 }, { 
-    // Automatically manages createdAt and updatedAt fields for tracking registrations
-    timestamps: true 
+  timestamps: true 
 });
 
-module.exports = mongoose.model('Student', StudentSchema);
+module.exports = mongoose.model('Student', studentSchema);

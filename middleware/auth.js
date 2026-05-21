@@ -1,24 +1,20 @@
-// middleware/auth.js
-
 exports.restrictTo = (...allowedRoles) => {
     return (req, res, next) => {
-        // Look for the user's role in the request headers
-        const userRole = req.headers['role']; 
-
-        if (!userRole) {
+        //  Ensure the 'protect' middleware has run and populated req.user
+        if (!req.user || !req.user.role) {
             return res.status(401).json({ 
-                message: "Access Denied: No identification role provided in headers." 
+                message: "Authentication required: Please log in." 
             });
         }
 
-        // Check if the user's role is included in the allowed roles array
-        if (!allowedRoles.includes(userRole.toLowerCase())) {
+        //  Check the user's role from the verified database record
+        if (!allowedRoles.includes(req.user.role.toLowerCase())) {
             return res.status(403).json({ 
-                message: `Forbidden: Your role (${userRole}) does not have permission to access this resource.` 
+                message: `Forbidden: Your role (${req.user.role}) does not have permission to access this resource.` 
             });
         }
 
-        // If everything checks out, pass control to the next middleware or controller!
+        // 3. Authorized: Proceed to the controller
         next();
     };
 };

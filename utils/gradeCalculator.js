@@ -26,4 +26,31 @@ const calculateGrade = (section, test1 = 0, test2 = 0, test3 = 0, assignment = 0
     }
 };
 
-module.exports = calculateGrade;
+/**
+ * Fully Automated Class Teacher / Year Tutor Comments based on Overall Terminal Average
+ */
+const getAutomaticYearTutorComment = (averageScore) => {
+    if (averageScore >= 75) return "An exceptionally brilliant performance. Keep maintaining this golden standard.";
+    if (averageScore >= 65) return "A highly commendable result. With this consistency, top honors are within reach next term.";
+    if (averageScore >= 50) return "A good performance, but you possess the capability to attain higher credit marks.";
+    if (averageScore >= 40) return "Passable terminal record. You are playing on the borderline; step up your study habits.";
+    return "An unsatisfactory performance. Intensive remedial study and closer supervision are urgently required.";
+};
+
+/**
+ * Fully Automated Principal / Admin Comments based on Overall Terminal Average
+ */
+const getAutomaticAdminComment = (averageScore) => {
+    if (averageScore >= 75) return "Outstanding academic excellence. A proud reflection of hard work. Keep it up!";
+    if (averageScore >= 65) return "Very impressive progress. Promising results showing dedication to studies.";
+    if (averageScore >= 50) return "A satisfactory performance. Focus more on weak areas to secure top tiers next session.";
+    if (averageScore >= 40) return "Fair trial, but there is vast room for improvement. Double your efforts.";
+    return "Unacceptable standard. Must show a completely renewed attitude to work next term to pass.";
+};
+
+// Export all pieces cleanly so your controller can destructure them
+module.exports = {
+    calculateGrade,
+    getAutomaticYearTutorComment,
+    getAutomaticAdminComment
+};
