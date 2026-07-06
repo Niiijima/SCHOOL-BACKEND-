@@ -9,7 +9,7 @@ const {
     getAutomaticAdminComment 
 } = require('../utils/gradeCalculator');
 
-// ====================== PIPELINE STEP 1 ======================
+// get students by subject
 exports.getStudentsBySubject = async (req, res) => {
     try {
         const { subjectId } = req.params;
@@ -31,11 +31,50 @@ exports.getStudentsBySubject = async (req, res) => {
     }
 };
 
-// ====================== PIPELINE STEP 2 ======================
+//submit scores
 exports.submitStudentScores = async (req, res) => {
     try {
-        const { student, subject, term, academicYear, test1, test2, test3, assignment, exam, noInClass } = req.body;
+        let { 
+            student,            
+            subject,            
+            studentName,        
+            subjectName,        
+            term, 
+            academicYear, 
+            test1, test2, test3, assignment, exam, noInClass 
+        } = req.body;
 
+       
+        const Student = require('../models/Student');
+
+        if (!student && studentName) {
+            const studentDoc = await Student.findOne({ 
+                name: { $regex: studentName, $options: 'i' }   // case-insensitive
+            });
+            
+            if (!studentDoc) {
+                return res.status(404).json({ message: `Student not found: ${studentName}` });
+            }
+            student = studentDoc._id;
+        }
+
+        if (!subject && subjectName) {
+            const subjectDoc = await Subject.findOne({ 
+                subjectName: { $regex: subjectName, $options: 'i' }
+            });
+            
+            if (!subjectDoc) {
+                return res.status(404).json({ message: `Subject not found: ${subjectName}` });
+            }
+            subject = subjectDoc._id;
+        }
+
+        // Validation
+        if (!student || !subject) {
+            return res.status(400).json({ 
+                message: "Either (student + subject) IDs or (studentName + subjectName) are required" 
+            });
+        }
         const termConfig = await TermStatus.findOne({ academicYear, currentTerm: term });
         if (termConfig?.isLocked) {
             return res.status(403).json({ message: "Access Denied: Results for this term are locked." });
@@ -52,19 +91,27 @@ exports.submitStudentScores = async (req, res) => {
 
         const savedGrade = await Grade.findOneAndUpdate(
             { student, subject, term, academicYear },
-            { test1, test2, test3, assignment, exam, totalScore, grade, remark,
-              manualNoInClass: noInClass ? Number(noInClass) : null,
-              gradedBy: req.user?.id },
+            { 
+                test1, test2, test3, assignment, exam, 
+                totalScore, grade, remark,
+                manualNoInClass: noInClass ? Number(noInClass) : null,
+                gradedBy: req.user?.id 
+            },
             { new: true, upsert: true, runValidators: true }
         );
 
-        res.status(200).json({ message: "Scores submitted successfully!", result: savedGrade });
+        res.status(200).json({ 
+            message: "Scores submitted successfully!", 
+            result: savedGrade 
+        });
+
     } catch (error) {
+        console.error("Submit Scores Error:", error);
         res.status(500).json({ message: "Server error", error: error.message });
     }
 };
 
-// ====================== ADMIN ONLY ======================
+//toggle
 exports.toggleTermLock = async (req, res) => {
     try {
         const { academicYear, currentTerm, isLocked, nextTermBegins } = req.body;
@@ -87,7 +134,7 @@ exports.toggleTermLock = async (req, res) => {
     }
 };
 
-// ====================== STUDENT REPORT ======================
+//students report
 exports.getStudentAcademicProfile = async (req, res) => {
     try {
         let studentId = req.params.studentId;
@@ -119,7 +166,7 @@ exports.getStudentAcademicProfile = async (req, res) => {
     }
 };
 
-// ====================== CLASS METRICS ======================
+// class performance
 exports.getClassPerformanceMetrics = async (req, res) => {
     try {
         res.status(200).json({ message: "Class Performance Metrics endpoint working" });
@@ -128,7 +175,7 @@ exports.getClassPerformanceMetrics = async (req, res) => {
     }
 };
 
-// ====================== HELPER ======================
+// grading system
 const getWAECGrade = (avg) => {
     if (avg >= 75) return { annualGrade: 'A1', annualRemark: 'Excellent' };
     if (avg >= 70) return { annualGrade: 'B2', annualRemark: 'Very Good' };
@@ -141,4 +188,4 @@ const getWAECGrade = (avg) => {
     return { annualGrade: 'F9', annualRemark: 'Fail' };
 };
 
-console.log("✅ Grade Controller Loaded Successfully");
+console.log(" Grade Controller Loaded Successfully");

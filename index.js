@@ -13,7 +13,8 @@ const mongoose = require('mongoose');
 
 // Import your application routes
 const studentRoutes = require('./routes/studentRoutes'); 
-const subjectRoutes = require('./routes/subjectRoutes'); // <-- Subject Route Import Added Here
+const subjectRoutes = require('./routes/subjectRoutes'); 
+const adminRoutes = require('./routes/admin');
 
 const uri = process.env.MONGO_URI;
 
@@ -34,6 +35,7 @@ app.use(express.json());
 app.use('/api/students', studentRoutes);
 app.use('/api/subjects', subjectRoutes); // <-- Subject Route Mount Added Here
 app.use('/api/grades', require('./routes/gradeRoutes'));
+app.use('/api/admin', adminRoutes);
 
 // Multer middleware & temporary test route
 const upload = require('./config/multer');
