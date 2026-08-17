@@ -1,28 +1,30 @@
 const mongoose = require('mongoose');
 
 const teacherSchema = new mongoose.Schema({
-    name: {
-        type: String,
-        required: [true, 'Please provide a name']
-    },
-    email: {
-        type: String,
-        required: [true, 'Please provide an email'],
-        unique: true
-    },
-    password: {
-        type: String,
-        required: [true, 'Please provide a password']
-    },
-    // This links the teacher to the subjects we created earlier
-    subjects: [{
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Subject'
+    name: { type: String, required: true },
+    email: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    phone: String,
+    qualification: String,
+    
+    // Class Teacher specific
+    currentClass: { type: String },        
+    
+    // Subjects they can grade / teach
+    subjects: [{ 
+        type: mongoose.Schema.Types.ObjectId, 
+        ref: 'Subject' 
     }],
-    role: {
-        type: String,
-        default: 'teacher'
+    
+    role: { 
+        type: String, 
+        default: 'teacher' 
+    },
+    status: { 
+        type: String, 
+        enum: ['active', 'inactive'], 
+        default: 'active' 
     }
-});
+}, { timestamps: true });
 
 module.exports = mongoose.model('Teacher', teacherSchema);
