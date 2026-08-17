@@ -4,6 +4,7 @@ console.log(" DIAGNOSTIC - Files in models folder:", fs.readdirSync(path.join(__
 console.log(" DIAGNOSTIC - Current directory:", __dirname);
 
 require('dotenv').config();
+console.log("MONGO_URI being used:", process.env.MONGO_URI);
 const dns = require('node:dns');
 dns.setServers(['8.8.8.8', '8.8.4.4']);   // Use Google DNS
 
@@ -13,7 +14,9 @@ const mongoose = require('mongoose');
 
 // Import your application routes
 const studentRoutes = require('./routes/studentRoutes'); 
-const subjectRoutes = require('./routes/subjectRoutes'); // <-- Subject Route Import Added Here
+const subjectRoutes = require('./routes/subjectRoutes'); 
+const adminRoutes = require('./routes/admin');
+const teacherRoutes = require('./routes/teacherRoutes');
 
 const uri = process.env.MONGO_URI;
 
@@ -30,17 +33,19 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Mount application routes under their respective path prefixes
+
 app.use('/api/students', studentRoutes);
-app.use('/api/subjects', subjectRoutes); // <-- Subject Route Mount Added Here
+app.use('/api/subjects', subjectRoutes); 
 app.use('/api/grades', require('./routes/gradeRoutes'));
+app.use('/api/admin', adminRoutes);
+app.use('/api/teachers', teacherRoutes);
 
 // Multer middleware & temporary test route
 const upload = require('./config/multer');
 app.post("/api/test-upload", (req, res) => {
     upload.single("image")(req, res, function (err) {
         if (err) {
-            console.error("❌ MULTER-CLOUDINARY PIPELINE CRASH:", err);
+            console.error(" MULTER-CLOUDINARY PIPELINE CRASH:", err);
             return res.status(500).json({ 
                 message: "Pipeline Error encountered", 
                 errorDetails: err.message || err.toString() 

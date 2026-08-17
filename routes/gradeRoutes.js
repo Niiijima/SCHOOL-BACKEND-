@@ -9,6 +9,6 @@ router.post('/submit-scores', gradeController.submitStudentScores);
 router.post('/toggle-lock', gradeController.toggleTermLock);
 router.get('/student/:studentId/academic-profile', gradeController.getStudentAcademicProfile);
 
-console.log("✅ Grade Routes Loaded Successfully");
+console.log(" Grade Routes Loaded Successfully");
 
 module.exports = router;

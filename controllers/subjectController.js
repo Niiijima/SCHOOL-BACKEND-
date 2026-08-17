@@ -25,7 +25,7 @@ exports.createSubject = async (req, res) => {
         await newSubject.save();
 
         res.status(201).json({
-            message: "Subject created successfully! 📚",
+            message: "Subject created successfully!",
             subject: newSubject
         });
 
