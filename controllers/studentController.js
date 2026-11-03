@@ -1,58 +1,94 @@
 const Student = require('../models/Student');
-const cloudinary = require('cloudinary').v2; 
+const User = require('../models/User');
+const bcrypt = require('bcryptjs');
+const cloudinary = require('cloudinary').v2;
 
-// Register a brand new student profile
+// ====================== REGISTER STUDENT ======================
 exports.registerStudent = async (req, res) => {
     try {
-        const { name, email, phone } = req.body;
+        const { 
+            name, 
+            email, 
+            password, 
+            admissionNumber, 
+            currentClass, 
+            gender, 
+            dateOfBirth, 
+            guardianName, 
+            guardianPhone 
+        } = req.body;
 
-        // Prevent duplicate accounts by checking the unique email address
-        const existingStudent = await Student.findOne({ email });
+        if (!name || !email || !password || !admissionNumber || !currentClass || !gender) {
+            return res.status(400).json({ 
+                message: "Please provide name, email, password, admissionNumber, currentClass and gender" 
+            });
+        }
+
+        const existingUser = await User.findOne({ email });
+        if (existingUser) {
+            return res.status(400).json({ message: "A user with this email already exists" });
+        }
+
+        const existingStudent = await Student.findOne({ admissionNumber });
         if (existingStudent) {
-            return res.status(400).json({ message: "Student already registered." });
+            return res.status(400).json({ message: "Admission number already exists" });
         }
 
-        // Extract the secure hosting URL if Multer intercepted an uploaded image file
-        let imageUrl = "";
-        if (req.file) {
-            imageUrl = req.file.path; 
-        }
+        const salt = await bcrypt.genSalt(12);
+        const hashedPassword = await bcrypt.hash(password, salt);
 
-        // Instantiate the new document layout with the captured text and media data
-        const newStudent = new Student({
+        // Create User
+        const newUser = await User.create({
             name,
             email,
-            phone, 
-            profileImage: imageUrl 
+            password: hashedPassword,
+            role: 'student'
         });
 
-        // Persist the record into MongoDB Atlas
-        await newStudent.save();
+        // Create Student linked to User
+        const newStudent = await Student.create({
+            user: newUser._id,
+            name,
+            admissionNumber,
+            currentClass,
+            gender,
+            dateOfBirth,
+            guardianName,
+            guardianPhone
+        });
 
         res.status(201).json({
-            message: "Student registered successfully! 🎓",
-            student: newStudent
+            message: "Student registered successfully!",
+            student: {
+                id: newStudent._id,
+                name: newStudent.name,
+                admissionNumber: newStudent.admissionNumber,
+                currentClass: newStudent.currentClass,
+                gender: newStudent.gender,
+                userId: newUser._id
+            }
         });
 
     } catch (error) {
+        console.error(error);
         res.status(500).json({ message: "Server error", error: error.message });
     }
 };
 
-// Retrieve a full roster list of all registered students
+// ====================== GET ALL STUDENTS ======================
 exports.getAllStudents = async (req, res) => {
     try {
-        const students = await Student.find();
+        const students = await Student.find().populate('user', 'email role');
         res.status(200).json(students);
     } catch (error) {
         res.status(500).json({ message: "Server error", error: error.message });
     }
 };
 
-// Retrieve a specific student profile using their unique database ID
+// ====================== GET STUDENT BY ID ======================
 exports.getStudentById = async (req, res) => {
     try {
-        const student = await Student.findById(req.params.id);
+        const student = await Student.findById(req.params.id).populate('user', 'email role');
         if (!student) {
             return res.status(404).json({ message: "Student not found" });
         }
@@ -62,67 +98,61 @@ exports.getStudentById = async (req, res) => {
     }
 };
 
-// Update existing records, phone numbers, status flags, or profile images dynamically
+// ====================== UPDATE STUDENT ======================
 exports.updateStudent = async (req, res) => {
     try {
-        const { name, email, phone, enrollmentStatus } = req.body;
-        
-        // Ensure the target student exists before performing modifications
-        let student = await Student.findById(req.params.id);
-        if (!student) {
-            return res.status(404).json({ message: "Student not found" });
-        }
-
-        // Only overwrite fields that were explicitly sent in the request body
-        if (name) student.name = name;
-        if (email) student.email = email;
-        if (phone) student.phone = phone;
-        if (enrollmentStatus) student.enrollmentStatus = enrollmentStatus;
-
-        // Overwrite the existing image URL if a brand new file payload is submitted
-        if (req.file) {
-            student.profileImage = req.file.path; 
-        }
-
-        // Save modifications back to the database
-        await student.save();
-
-        res.status(200).json({
-            message: "Student profile updated successfully! 📝",
-            student
-        });
-
-    } catch (error) {
-        res.status(500).json({ message: "Server error", error: error.message });
-    }
-};
-
-// Permanently drop a student profile from the database and wipe their Cloudinary assets
-exports.deleteStudent = async (req, res) => {
-    try {
-        // Find the target record to locate the associated media asset URL
         const student = await Student.findById(req.params.id);
         if (!student) {
             return res.status(404).json({ message: "Student not found" });
         }
 
-        // Extract the unique Cloudinary public ID from the image URL path string to handle storage cleanup
+        const { name, currentClass, gender, guardianName, guardianPhone, status } = req.body;
+
+        if (name) student.name = name;
+        if (currentClass) student.currentClass = currentClass;
+        if (gender) student.gender = gender;
+        if (guardianName) student.guardianName = guardianName;
+        if (guardianPhone) student.guardianPhone = guardianPhone;
+        if (status) student.status = status;
+
+        await student.save();
+
+        res.status(200).json({
+            message: "Student profile updated successfully!",
+            student
+        });
+    } catch (error) {
+        res.status(500).json({ message: "Server error", error: error.message });
+    }
+};
+
+// ====================== DELETE STUDENT ======================
+exports.deleteStudent = async (req, res) => {
+    try {
+        const student = await Student.findById(req.params.id);
+        if (!student) {
+            return res.status(404).json({ message: "Student not found" });
+        }
+
+        // Delete the linked User account as well
+        if (student.user) {
+            await User.findByIdAndDelete(student.user);
+        }
+
+        // Delete Cloudinary image if exists
         if (student.profileImage) {
             const urlParts = student.profileImage.split('/');
             const fileNameWithExtension = urlParts[urlParts.length - 1];
             const publicId = `school_backend_students/${fileNameWithExtension.split('.')[0]}`;
-            
-            // Delete the raw media asset resource directly from the remote Cloudinary bucket
             await cloudinary.uploader.destroy(publicId);
         }
 
-        // Remove the data record text entry completely from MongoDB collection
+        // Delete the student profile
         await Student.findByIdAndDelete(req.params.id);
 
         res.status(200).json({
-            message: "Student profile and assets deleted successfully! 🗑️"
+            message: "Student profile and linked user deleted successfully!"
         });
-
     } catch (error) {
         res.status(500).json({ message: "Server error", error: error.message });
     }
