@@ -4,7 +4,7 @@ const dns = require('dns');
 // Force Google DNS
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
-const uri = "mongodb+srv://qagwu11_db_user:Amateratsu@cluster0.lkdlfx4.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
+//const uri = "mongodb+srv://qagwu11_db_user:Amateratsu@cluster0.lkdlfx4.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
 
 const sourceDB = "test";
 const targetDB = "school_backend";
