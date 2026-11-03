@@ -1,5 +1,12 @@
+require('dotenv').config();
+const { MongoClient } = require('mongodb');
+const dns = require('dns');
+
+// Force Google DNS
+dns.setServers(['8.8.8.8', '8.8.4.4']);
+
 // Reference the environment variable from .env
-const uri = process.env.MONGODB_URI;
+const uri = process.env.MONGO_URI;
 
 const sourceDB = "test";
 const targetDB = "school_backend";
@@ -47,5 +54,7 @@ async function migrate() {
     await client.close();
   }
 }
+
+migrate();
 
 migrate();
