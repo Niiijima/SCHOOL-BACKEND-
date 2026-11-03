@@ -1,10 +1,12 @@
+require('dotenv').config();
 const { MongoClient } = require('mongodb');
 const dns = require('dns');
 
 // Force Google DNS
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
-//const uri = "mongodb+srv://qagwu11_db_user:Amateratsu@cluster0.lkdlfx4.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
+// Reference the environment variable from .env
+const uri = process.env.MONGODB_URI;
 
 const sourceDB = "test";
 const targetDB = "school_backend";
@@ -27,7 +29,7 @@ async function migrate() {
   try {
     console.log("Connecting to MongoDB...");
     await client.connect();
-    console.log(" Connected successfully");
+    console.log("Connected successfully");
 
     const source = client.db(sourceDB);
     const target = client.db(targetDB);
@@ -36,18 +38,18 @@ async function migrate() {
       const docs = await source.collection(name).find({}).toArray();
 
       if (docs.length === 0) {
-        console.log(` ${name}: empty - skipped`);
+        console.log(`${name}: empty - skipped`);
         continue;
       }
 
       await target.collection(name).deleteMany({});
       await target.collection(name).insertMany(docs);
-      console.log(` ${name}: copied ${docs.length} documents`);
+      console.log(`${name}: copied ${docs.length} documents`);
     }
 
-    console.log("\n Migration completed!");
+    console.log("\nMigration completed!");
   } catch (err) {
-    console.error(" Error:", err.message);
+    console.error("Error:", err.message);
   } finally {
     await client.close();
   }
