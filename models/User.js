@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs'); // Use bcryptjs as requested in your snippet
+const bcrypt = require('bcryptjs');
 
 const userSchema = new mongoose.Schema({
     name: {
@@ -18,7 +18,7 @@ const userSchema = new mongoose.Schema({
         type: String,
         required: [true, 'Please provide a password'],
         minlength: 6,
-        select: false // Automatically hides password when fetching users
+        select: false
     },
     role: {
         type: String,
@@ -29,7 +29,6 @@ const userSchema = new mongoose.Schema({
         type: Boolean,
         default: true
     },
-    // The bridge to your Student model
     studentProfile: { 
         type: mongoose.Schema.Types.ObjectId, 
         ref: 'Student' 
@@ -38,11 +37,10 @@ const userSchema = new mongoose.Schema({
     timestamps: true
 });
 
-// Middleware: Hash password before saving
-userSchema.pre('save', async function(next) {
-    if (!this.isModified('password')) return next();
+// Fixed middleware (no next parameter)
+userSchema.pre('save', async function() {
+    if (!this.isModified('password')) return;
     this.password = await bcrypt.hash(this.password, 12);
-    next();
 });
 
 // Method: Verify password

@@ -10,4 +10,7 @@ router.post('/create', subjectController.createSubject);
 // Teachers and Admins can view the subject list
 router.get('/', restrictTo('admin', 'teacher'), subjectController.getAllSubjects);
 
+//enroll students
+router.post('/enroll', subjectController.enrollStudent);
+
 module.exports = router;

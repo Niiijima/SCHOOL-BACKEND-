@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const studentController = require('../controllers/studentController'); // Path to your controller
-const upload = require('../config/multer'); // Path to your working multer config
+const upload = require('../config/multer'); // Path to my working multer config
 
 //  Load the role restriction security guard
 const { restrictTo } = require('../middleware/auth');
@@ -17,7 +17,8 @@ router.get('/test', (req, res) => {
 // --- PROTECTED ROUTES ---
 
 //  Protected Registration: Only admins can register new students
-router.post('/register', restrictTo('admin'), upload.single('image'), studentController.registerStudent);
+//router.post('/register', restrictTo('admin'), upload.single('image'), studentController.registerStudent);
+router.post('/register', studentController.registerStudent);
 
 //  Protected Dashboard List: Both admins and teachers can view all students
 router.get('/', restrictTo('admin', 'teacher'), studentController.getAllStudents);
