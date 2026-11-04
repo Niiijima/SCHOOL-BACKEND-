@@ -1,7 +1,5 @@
 const mongoose = require('mongoose');
-
 const studentSchema = new mongoose.Schema({
-  // Link to the core login account
   user: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -19,7 +17,7 @@ const studentSchema = new mongoose.Schema({
   },
   currentClass: {
     type: String,
-    required: [true, 'Please assign a class arm (e.g., SSS 1 A, JSS 3 B)'],
+    required: [true, 'Please assign a class arm'],
     trim: true
   },
   gender: {
@@ -27,9 +25,29 @@ const studentSchema = new mongoose.Schema({
     enum: ['Male', 'Female'],
     required: true
   },
-  dateOfBirth: { type: Date },
-  guardianName: { type: String, trim: true },
-  guardianPhone: { type: String, trim: true },
+  dateOfBirth: { 
+    type: Date 
+  },
+  address: {
+    type: String,
+    trim: true
+  },
+  phone: {
+    type: String,
+    trim: true
+  },
+  guardianName: { 
+    type: String, 
+    trim: true 
+  },
+  guardianPhone: { 
+    type: String, 
+    trim: true 
+  },
+  profileImage: {
+    type: String,
+    default: ""
+  },
   status: { 
     type: String, 
     enum: ['active', 'graduated', 'withdrawn'], 

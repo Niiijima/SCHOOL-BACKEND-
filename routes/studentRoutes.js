@@ -32,4 +32,17 @@ router.put('/:id', restrictTo('admin'), upload.single('image'), studentControlle
 //  Protected Delete: Only admins can remove a student from the system
 router.delete('/:id', restrictTo('admin'), studentController.deleteStudent);
 
+//promote student to next class
+router.post('/promote', studentController.promoteStudent);
+
+//bulk promote students to next class
+router.post('/bulk-promote', studentController.bulkPromoteStudents);
+
+//students login route
+router.post('/login', studentController.loginStudent);
+
+//
+router.get('/profile/me', studentController.getMyProfile);
+router.get('/profile/:id', studentController.getMyProfile);
+
 module.exports = router;
