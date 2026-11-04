@@ -6,7 +6,7 @@ const dns = require('dns');
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
 // Reference the environment variable from .env
-const uri = process.env.MONGODB_URI;
+const uri = process.env.MONGO_URI;
 
 const sourceDB = "test";
 const targetDB = "school_backend";

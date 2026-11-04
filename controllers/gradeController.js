@@ -174,7 +174,7 @@ exports.getStudentAcademicProfile = async (req, res) => {
             studentId = req.user.studentProfile;
         }
 
-        const { academicYear } = req.query;
+        const { academicYear, term } = req.query;
         if (!academicYear) {
             return res.status(400).json({ message: "academicYear is required" });
         }
@@ -192,6 +192,7 @@ exports.getStudentAcademicProfile = async (req, res) => {
             return res.status(404).json({ message: "No academic records found for this year" });
         }
 
+        // Group grades by subject
         const subjectsMap = {};
 
         rawGrades.forEach(grade => {
@@ -236,60 +237,84 @@ exports.getStudentAcademicProfile = async (req, res) => {
             const second = sub.terms["Second Term"];
             const third = sub.terms["Third Term"];
 
+            const firstTermTotal = first ? first.totalScore : null;
+            const secondTermTotal = second ? second.totalScore : null;
+            const thirdTermTotal = third ? third.totalScore : null;
+
+            // Cumulative calculations
             let cumulativeSecond = null;
             let cumulativeThird = null;
             let annualAverage = null;
 
             if (first && second) {
-                cumulativeSecond = Number(((first.totalScore + second.totalScore) / 2).toFixed(1));
+                cumulativeSecond = first.totalScore + second.totalScore; // out of 200
             }
 
             if (first && second && third) {
-                cumulativeThird = Number(((first.totalScore + second.totalScore + third.totalScore) / 3).toFixed(1));
-                annualAverage = cumulativeThird;
+                cumulativeThird = first.totalScore + second.totalScore + third.totalScore; // out of 300
+                annualAverage = Number((cumulativeThird / 3).toFixed(1));
             } else if (first && second) {
-                annualAverage = cumulativeSecond;
+                annualAverage = Number((cumulativeSecond / 2).toFixed(1));
             } else if (first) {
                 annualAverage = first.totalScore;
             }
 
-            if (annualAverage !== null) {
-                totalAnnualScore += annualAverage;
-                subjectCount++;
+            // Clean display based on selected term
+            let displayData = {};
+
+            if (term === "First Term") {
+                displayData = {
+                    firstTerm: first
+                };
+            } 
+            else if (term === "Second Term") {
+                displayData = {
+                    firstTermTotal: firstTermTotal,
+                    secondTerm: second,
+                    cumulativeSecondTerm: cumulativeSecond
+                };
+            } 
+            else {
+                // Full Annual Report
+                displayData = {
+                    firstTermTotal: firstTermTotal,
+                    secondTermTotal: secondTermTotal,
+                    thirdTermTotal: third,
+                    cumulativeSecondTerm: cumulativeSecond,
+                    cumulativeThirdTerm: cumulativeThird,
+                    annualAverage: annualAverage,
+                    annualGrade: annualAverage !== null ? getWAECGrade(annualAverage).annualGrade : null,
+                    annualRemark: annualAverage !== null ? getWAECGrade(annualAverage).annualRemark : null
+                };
+
+                if (annualAverage !== null) {
+                    totalAnnualScore += annualAverage;
+                    subjectCount++;
+                }
             }
 
+            // Graph data
             performanceGraph.datasets.push({
                 subject: sub.subjectName,
                 subjectCode: sub.subjectCode,
-                data: [
-                    first ? first.totalScore : null,
-                    second ? second.totalScore : null,
-                    third ? third.totalScore : null
-                ]
+                data: [firstTermTotal, secondTermTotal, thirdTermTotal]
             });
 
             reportCardSummary.push({
                 subjectName: sub.subjectName,
                 subjectCode: sub.subjectCode,
-                firstTerm: first,
-                secondTerm: second,
-                thirdTerm: third,
-                cumulativeSecondTerm: cumulativeSecond,
-                cumulativeThirdTerm: cumulativeThird,
-                annualAverage: annualAverage,
-                annualGrade: annualAverage !== null ? getWAECGrade(annualAverage).annualGrade : null,
-                annualRemark: annualAverage !== null ? getWAECGrade(annualAverage).annualRemark : null
+                ...displayData
             });
         }
 
         const overallAverage = subjectCount > 0 
             ? Number((totalAnnualScore / subjectCount).toFixed(1)) 
-            : 0;
+            : null;
 
-        const overallGradeInfo = getWAECGrade(overallAverage);
+        const overallGradeInfo = overallAverage !== null ? getWAECGrade(overallAverage) : null;
         const hasAllThreeTerms = rawGrades.some(g => g.term === "Third Term");
 
-        res.status(200).json({
+        const response = {
             student: {
                 id: student._id,
                 name: student.name,
@@ -298,14 +323,21 @@ exports.getStudentAcademicProfile = async (req, res) => {
                 gender: student.gender
             },
             academicYear,
-            overallAverage,
-            overallGrade: overallGradeInfo.annualGrade,
-            overallRemark: overallGradeInfo.annualRemark,
-            yearTutorComment: hasAllThreeTerms ? getAutomaticYearTutorComment(overallAverage) : null,
-            adminComment: hasAllThreeTerms ? getAutomaticAdminComment(overallAverage) : null,
+            view: term || "Full Annual Report",
             reportCardSummary,
             performanceGraph
-        });
+        };
+
+        // Only add overall summary on Full Annual Report
+        if (!term) {
+            response.overallAverage = overallAverage;
+            response.overallGrade = overallGradeInfo?.annualGrade || null;
+            response.overallRemark = overallGradeInfo?.annualRemark || null;
+            response.yearTutorComment = hasAllThreeTerms ? getAutomaticYearTutorComment(overallAverage) : null;
+            response.adminComment = hasAllThreeTerms ? getAutomaticAdminComment(overallAverage) : null;
+        }
+
+        res.status(200).json(response);
 
     } catch (error) {
         console.error(error);
