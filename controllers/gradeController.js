@@ -147,6 +147,7 @@ exports.submitStudentScores = async (req, res) => {
 exports.toggleTermLock = async (req, res) => {
     try {
         const { academicYear, currentTerm, isLocked, nextTermBegins } = req.body;
+
         if (!academicYear || !currentTerm || typeof isLocked !== 'boolean') {
             return res.status(400).json({ message: "Missing required fields" });
         }
@@ -157,9 +158,18 @@ exports.toggleTermLock = async (req, res) => {
             { new: true, upsert: true }
         );
 
+        let newAcademicYear = null;
+
+        // If Third Term is published/locked, advance academic year
+        if (currentTerm === "Third Term" && isLocked === true) {
+            const { advanceAcademicYear } = require('../utils/academicYear');
+            newAcademicYear = await advanceAcademicYear(academicYear);
+        }
+
         res.status(200).json({
             message: `Term ${currentTerm} has been ${isLocked ? 'LOCKED' : 'UNLOCKED'}`,
-            status: updatedStatus
+            status: updatedStatus,
+            newAcademicYear
         });
     } catch (error) {
         res.status(500).json({ message: "Server error", error: error.message });
@@ -174,9 +184,10 @@ exports.getStudentAcademicProfile = async (req, res) => {
             studentId = req.user.studentProfile;
         }
 
-        const { academicYear, term } = req.query;
+        const { getCurrentAcademicYear } = require('../utils/academicYear');
+        const academicYear = req.query.academicYear || await getCurrentAcademicYear();
         if (!academicYear) {
-            return res.status(400).json({ message: "academicYear is required" });
+        return res.status(400).json({ message: "academicYear is required" });
         }
 
         const Student = require('../models/Student');

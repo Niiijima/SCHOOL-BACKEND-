@@ -4,43 +4,43 @@ const TermStatus = require('../models/TermStatus');
 const Grade = require('../models/Grade');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const cloudinary = require('cloudinary').v2;
 
 // ====================== STUDENT LOGIN ======================
 exports.loginStudent = async (req, res) => {
     try {
-        const { name, password } = req.body;
+        const { admissionNumber, password } = req.body;
 
-        if (!name || !password) {
-            return res.status(400).json({ message: "Name and password are required" });
+        if (!admissionNumber || !password) {
+            return res.status(400).json({ 
+                message: "Admission number and password are required" 
+            });
         }
 
-        // Find student by name (case-insensitive)
-        const student = await Student.findOne({ 
-            name: { $regex: new RegExp(`^${name}$`, 'i') } 
-        });
-
+        const student = await Student.findOne({ admissionNumber });
         if (!student) {
             return res.status(401).json({ message: "Invalid credentials" });
         }
 
-        // Find the linked user account
         const user = await User.findById(student.user).select('+password');
         if (!user) {
             return res.status(401).json({ message: "Invalid credentials" });
         }
 
-        // Check password
+        if (user.isActive === false) {
+            return res.status(401).json({ message: "This account has been deactivated" });
+        }
+
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
             return res.status(401).json({ message: "Invalid credentials" });
         }
 
-        // Generate token
         const token = jwt.sign(
-            { 
-                id: user._id, 
+            {
+                id: user._id,
                 role: user.role,
-                studentProfile: student._id 
+                studentProfile: student._id
             },
             process.env.JWT_SECRET,
             { expiresIn: '7d' }
@@ -56,7 +56,6 @@ exports.loginStudent = async (req, res) => {
                 currentClass: student.currentClass
             }
         });
-
     } catch (error) {
         res.status(500).json({ message: "Server error", error: error.message });
     }
@@ -74,7 +73,9 @@ exports.registerStudent = async (req, res) => {
             gender, 
             dateOfBirth, 
             guardianName, 
-            guardianPhone 
+            guardianPhone,
+            address,
+            phone
         } = req.body;
 
         if (!name || !email || !password || !admissionNumber || !currentClass || !gender) {
@@ -93,40 +94,51 @@ exports.registerStudent = async (req, res) => {
             return res.status(400).json({ message: "Admission number already exists" });
         }
 
-        const salt = await bcrypt.genSalt(12);
-        const hashedPassword = await bcrypt.hash(password, salt);
-
-        // Create User
+        // 1. Create User first (password hashed once by User model)
         const newUser = await User.create({
             name,
             email,
-            password: hashedPassword,
+            password,
             role: 'student'
         });
 
-        // Create Student linked to User
-        const newStudent = await Student.create({
-            user: newUser._id,
-            name,
-            admissionNumber,
-            currentClass,
-            gender,
-            dateOfBirth,
-            guardianName,
-            guardianPhone
-        });
+        try {
+            // 2. Create Student profile
+            const newStudent = await Student.create({
+                user: newUser._id,
+                name,
+                admissionNumber,
+                currentClass,
+                gender,
+                dateOfBirth,
+                guardianName,
+                guardianPhone,
+                address,
+                phone,
+                profileImage: req.file ? req.file.path : ""
+            });
 
-        res.status(201).json({
-            message: "Student registered successfully!",
-            student: {
-                id: newStudent._id,
-                name: newStudent.name,
-                admissionNumber: newStudent.admissionNumber,
-                currentClass: newStudent.currentClass,
-                gender: newStudent.gender,
-                userId: newUser._id
-            }
-        });
+            // 3. Link student profile back to user
+            newUser.studentProfile = newStudent._id;
+            await newUser.save({ validateBeforeSave: false });
+
+            return res.status(201).json({
+                message: "Student registered successfully!",
+                student: {
+                    id: newStudent._id,
+                    name: newStudent.name,
+                    admissionNumber: newStudent.admissionNumber,
+                    currentClass: newStudent.currentClass,
+                    gender: newStudent.gender,
+                    userId: newUser._id
+                }
+            });
+
+        } catch (studentError) {
+            // 4. Cleanup: if student creation fails, delete the user
+            await User.findByIdAndDelete(newUser._id);
+            throw studentError;
+        }
 
     } catch (error) {
         console.error(error);
@@ -165,7 +177,16 @@ exports.updateStudent = async (req, res) => {
             return res.status(404).json({ message: "Student not found" });
         }
 
-        const { name, currentClass, gender, guardianName, guardianPhone, status } = req.body;
+        const { 
+            name, 
+            currentClass, 
+            gender, 
+            guardianName, 
+            guardianPhone, 
+            status,
+            address,
+            phone
+        } = req.body;
 
         if (name) student.name = name;
         if (currentClass) student.currentClass = currentClass;
@@ -173,6 +194,13 @@ exports.updateStudent = async (req, res) => {
         if (guardianName) student.guardianName = guardianName;
         if (guardianPhone) student.guardianPhone = guardianPhone;
         if (status) student.status = status;
+        if (address) student.address = address;
+        if (phone) student.phone = phone;
+
+        // Save uploaded image if present
+        if (req.file) {
+            student.profileImage = req.file.path;
+        }
 
         await student.save();
 
@@ -317,7 +345,32 @@ exports.bulkPromoteStudents = async (req, res) => {
 // ====================== GET STUDENT PROFILE ======================
 exports.getMyProfile = async (req, res) => {
     try {
-        const studentId = req.user?.studentProfile || req.params.id;
+        let studentId;
+
+        // STUDENT can only view their own profile
+        if (req.user.role === 'student') {
+            studentId = req.user.studentProfile;
+
+            if (!studentId) {
+                return res.status(404).json({ message: "Student profile not found for this account" });
+            }
+
+            // Extra safety: if they try to pass another id in the URL, block it
+            if (req.params.id && req.params.id !== studentId.toString()) {
+                return res.status(403).json({ message: "You are not allowed to view another student's profile" });
+            }
+        } 
+        // ADMIN or TEACHER can view any student profile
+        else if (['admin', 'teacher'].includes(req.user.role)) {
+            studentId = req.params.id;
+
+            if (!studentId) {
+                return res.status(400).json({ message: "Student ID is required" });
+            }
+        } 
+        else {
+            return res.status(403).json({ message: "Access denied" });
+        }
 
         const student = await Student.findById(studentId)
             .populate('user', 'email role');
@@ -326,7 +379,8 @@ exports.getMyProfile = async (req, res) => {
             return res.status(404).json({ message: "Student not found" });
         }
 
-        const academicYear = req.query.academicYear || "2025/2026";
+        const { getCurrentAcademicYear } = require('../utils/academicYear');
+        const academicYear = req.query.academicYear || await getCurrentAcademicYear();
         const grades = await Grade.find({ student: studentId, academicYear });
 
         const termStatus = {
