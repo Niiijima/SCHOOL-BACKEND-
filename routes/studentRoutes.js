@@ -1,48 +1,85 @@
 const express = require('express');
 const router = express.Router();
-const studentController = require('../controllers/studentController'); // Path to your controller
-const upload = require('../config/multer'); // Path to my working multer config
+const studentController = require('../controllers/studentController');
+const upload = require('../config/multer');
+const { protect, restrictTo } = require('../middleware/auth');
 
-//  Load the role restriction security guard
-const { restrictTo } = require('../middleware/auth');
-
-// --- PUBLIC ROUTES ---
-
-// Public test route (no protection needed)
+// ====================== PUBLIC ROUTES ======================
 router.get('/test', (req, res) => {
     res.send('Student route is working!');
 });
 
-
-// --- PROTECTED ROUTES ---
-
-//  Protected Registration: Only admins can register new students
-//router.post('/register', restrictTo('admin'), upload.single('image'), studentController.registerStudent);
-router.post('/register', studentController.registerStudent);
-
-//  Protected Dashboard List: Both admins and teachers can view all students
-router.get('/', restrictTo('admin', 'teacher'), studentController.getAllStudents);
-
-//  Protected Individual Profile: Both admins and teachers can look up a student by ID
-router.get('/:id', restrictTo('admin', 'teacher'), studentController.getStudentById);
-
-// Protected Update: Only admins can edit student details/images
-router.put('/:id', restrictTo('admin'), upload.single('image'), studentController.updateStudent);
-
-//  Protected Delete: Only admins can remove a student from the system
-router.delete('/:id', restrictTo('admin'), studentController.deleteStudent);
-
-//promote student to next class
-router.post('/promote', studentController.promoteStudent);
-
-//bulk promote students to next class
-router.post('/bulk-promote', studentController.bulkPromoteStudents);
-
-//students login route
 router.post('/login', studentController.loginStudent);
 
-//
-router.get('/profile/me', studentController.getMyProfile);
-router.get('/profile/:id', studentController.getMyProfile);
+// ====================== ADMIN ONLY ======================
+router.post(
+    '/register',
+    protect,
+    restrictTo('admin'),
+    upload.single('image'),
+    studentController.registerStudent
+);
+
+router.post(
+    '/promote',
+    protect,
+    restrictTo('admin'),
+    studentController.promoteStudent
+);
+
+router.post(
+    '/bulk-promote',
+    protect,
+    restrictTo('admin'),
+    studentController.bulkPromoteStudents
+);
+
+router.put(
+    '/:id',
+    protect,
+    restrictTo('admin'),
+    upload.single('image'),
+    studentController.updateStudent
+);
+
+router.delete(
+    '/:id',
+    protect,
+    restrictTo('admin'),
+    studentController.deleteStudent
+);
+
+// ====================== ADMIN + TEACHER ======================
+router.get(
+    '/',
+    protect,
+    restrictTo('admin', 'teacher'),
+    studentController.getAllStudents
+);
+
+// ====================== STUDENT PROFILE ======================
+// IMPORTANT: these must come BEFORE /:id
+router.get(
+    '/profile/me',
+    protect,
+    restrictTo('student'),
+    studentController.getMyProfile
+);
+
+router.get(
+    '/profile/:id',
+    protect,
+    restrictTo('admin', 'teacher'),
+    studentController.getMyProfile
+);
+
+// ====================== GET STUDENT BY ID ======================
+// This must be last among GET routes
+router.get(
+    '/:id',
+    protect,
+    restrictTo('admin', 'teacher'),
+    studentController.getStudentById
+);
 
 module.exports = router;
