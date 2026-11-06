@@ -39,6 +39,7 @@ app.use('/api/subjects', subjectRoutes);
 app.use('/api/grades', require('./routes/gradeRoutes'));
 app.use('/api/admin', adminRoutes);
 app.use('/api/teachers', teacherRoutes);
+app.use('/api/settings', require('./routes/settingsRoutes'));
 
 // Multer middleware & temporary test route
 const upload = require('./config/multer');

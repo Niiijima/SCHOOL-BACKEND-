@@ -16,7 +16,6 @@ exports.registerAdmin = async (req, res) => {
             return res.status(400).json({ message: "Admin with this email already exists" });
         }
 
-        // Hash password once
         const salt = await bcrypt.genSalt(12);
         const hashedPassword = await bcrypt.hash(password, salt);
 
@@ -24,7 +23,8 @@ exports.registerAdmin = async (req, res) => {
             name,
             email,
             password: hashedPassword,
-            role: 'admin'
+            role: 'admin',
+            isActive: true
         });
 
         res.status(201).json({
@@ -36,9 +36,10 @@ exports.registerAdmin = async (req, res) => {
                 role: admin.role
             }
         });
-
     } catch (error) {
-        console.error(error);
+        if (error.code === 11000) {
+            return res.status(400).json({ message: "Admin with this email already exists" });
+        }
         res.status(500).json({ message: "Server error", error: error.message });
     }
 };
@@ -52,10 +53,13 @@ exports.loginAdmin = async (req, res) => {
             return res.status(400).json({ message: "Email and password are required" });
         }
 
-        // IMPORTANT: include password because select: false is set on the model
         const admin = await Admin.findOne({ email }).select('+password');
         if (!admin) {
             return res.status(401).json({ message: "Invalid credentials" });
+        }
+
+        if (admin.isActive === false) {
+            return res.status(401).json({ message: "This account has been deactivated" });
         }
 
         const isMatch = await bcrypt.compare(password, admin.password);
@@ -83,9 +87,7 @@ exports.loginAdmin = async (req, res) => {
             },
             token
         });
-
     } catch (error) {
-        console.error(error);
         res.status(500).json({ message: "Server error", error: error.message });
     }
 };

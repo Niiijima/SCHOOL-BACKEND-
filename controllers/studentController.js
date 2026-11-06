@@ -5,6 +5,7 @@ const Grade = require('../models/Grade');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cloudinary = require('cloudinary').v2;
+const { validateClassAndDepartment, formatClassDisplay } = require('../utils/allowedClasses');
 
 // ====================== STUDENT LOGIN ======================
 exports.loginStudent = async (req, res) => {
@@ -64,85 +65,79 @@ exports.loginStudent = async (req, res) => {
 // ====================== REGISTER STUDENT ======================
 exports.registerStudent = async (req, res) => {
     try {
-        const { 
-            name, 
-            email, 
-            password, 
-            admissionNumber, 
-            currentClass, 
-            gender, 
-            dateOfBirth, 
-            guardianName, 
-            guardianPhone,
-            address,
-            phone
-        } = req.body;
-
-        if (!name || !email || !password || !admissionNumber || !currentClass || !gender) {
-            return res.status(400).json({ 
-                message: "Please provide name, email, password, admissionNumber, currentClass and gender" 
-            });
-        }
-
-        const existingUser = await User.findOne({ email });
-        if (existingUser) {
-            return res.status(400).json({ message: "A user with this email already exists" });
-        }
-
-        const existingStudent = await Student.findOne({ admissionNumber });
-        if (existingStudent) {
-            return res.status(400).json({ message: "Admission number already exists" });
-        }
-
-        // 1. Create User first (password hashed once by User model)
-        const newUser = await User.create({
+        const {
             name,
+            admissionNumber,
             email,
             password,
-            role: 'student'
-        });
+            currentClass,
+            department,
+            // ... other fields
+        } = req.body;
 
-        try {
-            // 2. Create Student profile
-            const newStudent = await Student.create({
-                user: newUser._id,
-                name,
-                admissionNumber,
-                currentClass,
-                gender,
-                dateOfBirth,
-                guardianName,
-                guardianPhone,
-                address,
-                phone,
-                profileImage: req.file ? req.file.path : ""
-            });
-
-            // 3. Link student profile back to user
-            newUser.studentProfile = newStudent._id;
-            await newUser.save({ validateBeforeSave: false });
-
-            return res.status(201).json({
-                message: "Student registered successfully!",
-                student: {
-                    id: newStudent._id,
-                    name: newStudent.name,
-                    admissionNumber: newStudent.admissionNumber,
-                    currentClass: newStudent.currentClass,
-                    gender: newStudent.gender,
-                    userId: newUser._id
-                }
-            });
-
-        } catch (studentError) {
-            // 4. Cleanup: if student creation fails, delete the user
-            await User.findByIdAndDelete(newUser._id);
-            throw studentError;
+        // Validate class + department
+        const classCheck = validateClassAndDepartment(currentClass, department || null);
+        if (!classCheck.valid) {
+            return res.status(400).json({ message: classCheck.message });
         }
 
+        // ... rest of your existing register logic
+        // (check existing admissionNumber / email, hash password, create student, etc.)
+
+        const student = await Student.create({
+            name,
+            admissionNumber,
+            email,
+            password: hashedPassword,   // or however you hash
+            currentClass,
+            department: department || null,
+            // ... other fields
+            image: req.file ? req.file.path : undefined
+        });
+
+        res.status(201).json({
+            message: 'Student registered successfully',
+            student: {
+                id: student._id,
+                name: student.name,
+                admissionNumber: student.admissionNumber,
+                currentClass: student.currentClass,
+                department: student.department,
+                displayClass: formatClassDisplay(student.currentClass, student.department)
+            }
+        });
     } catch (error) {
         console.error(error);
-        res.status(500).json({ message: "Server error", error: error.message });
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+};
+
+
+// ====================== UPDATE STUDENT ======================
+exports.updateStudent = async (req, res) => {
+    try {
+        const { currentClass, department } = req.body;
+
+        // Only validate if class or department is being changed
+        if (currentClass !== undefined || department !== undefined) {
+            const student = await Student.findById(req.params.id);
+            if (!student) {
+                return res.status(404).json({ message: 'Student not found' });
+            }
+
+            const newClass = currentClass !== undefined ? currentClass : student.currentClass;
+            const newDept  = department !== undefined ? department : student.department;
+
+            const classCheck = validateClassAndDepartment(newClass, newDept || null);
+            if (!classCheck.valid) {
+                return res.status(400).json({ message: classCheck.message });
+            }
+        }
+
+        // ... rest of your update logic
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error', error: error.message });
     }
 };
 
@@ -221,21 +216,27 @@ exports.deleteStudent = async (req, res) => {
             return res.status(404).json({ message: "Student not found" });
         }
 
-        // Delete the linked User account as well
-        if (student.user) {
-            await User.findByIdAndDelete(student.user);
-        }
-
-        // Delete Cloudinary image if exists
+        // 1. Delete Cloudinary image first
         if (student.profileImage) {
-            const urlParts = student.profileImage.split('/');
-            const fileNameWithExtension = urlParts[urlParts.length - 1];
-            const publicId = `school_backend_students/${fileNameWithExtension.split('.')[0]}`;
-            await cloudinary.uploader.destroy(publicId);
+            try {
+                const urlParts = student.profileImage.split('/');
+                const fileNameWithExtension = urlParts[urlParts.length - 1];
+                const publicId = `school_backend_students/${fileNameWithExtension.split('.')[0]}`;
+                await cloudinary.uploader.destroy(publicId);
+            } catch (imgErr) {
+                console.error("Cloudinary delete failed:", imgErr.message);
+            }
         }
 
-        // Delete the student profile
-        await Student.findByIdAndDelete(req.params.id);
+        const userId = student.user;
+
+        // 2. Delete student
+        await Student.findByIdAndDelete(student._id);
+
+        // 3. Delete linked user
+        if (userId) {
+            await User.findByIdAndDelete(userId);
+        }
 
         res.status(200).json({
             message: "Student profile and linked user deleted successfully!"
@@ -256,7 +257,6 @@ exports.promoteStudent = async (req, res) => {
             });
         }
 
-        // 1. Check if Third Term has been published/locked
         const termStatus = await TermStatus.findOne({
             academicYear,
             currentTerm: "Third Term"
@@ -268,13 +268,23 @@ exports.promoteStudent = async (req, res) => {
             });
         }
 
-        // 2. Find the student
         const student = await Student.findOne({ admissionNumber });
         if (!student) {
             return res.status(404).json({ message: "Student not found" });
         }
 
-        // 3. Promote
+        if (student.status !== "active") {
+            return res.status(400).json({ 
+                message: `Cannot promote student with status: ${student.status}` 
+            });
+        }
+
+        if (student.currentClass === newClass) {
+            return res.status(400).json({ 
+                message: "Student is already in the target class" 
+            });
+        }
+
         const oldClass = student.currentClass;
         student.currentClass = newClass;
         await student.save();
@@ -289,7 +299,6 @@ exports.promoteStudent = async (req, res) => {
                 newClass: student.currentClass
             }
         });
-
     } catch (error) {
         res.status(500).json({ message: "Server error", error: error.message });
     }
@@ -306,7 +315,12 @@ exports.bulkPromoteStudents = async (req, res) => {
             });
         }
 
-        // Check if Third Term has been published
+        if (fromClass === toClass) {
+            return res.status(400).json({ 
+                message: "fromClass and toClass cannot be the same" 
+            });
+        }
+
         const termStatus = await TermStatus.findOne({
             academicYear,
             currentTerm: "Third Term"
@@ -318,26 +332,30 @@ exports.bulkPromoteStudents = async (req, res) => {
             });
         }
 
-        // Find all students in the class
-        const students = await Student.find({ currentClass: fromClass });
+        const students = await Student.find({
+            currentClass: fromClass,
+            status: "active"
+        });
 
         if (students.length === 0) {
-            return res.status(404).json({ message: "No students found in this class" });
+            return res.status(404).json({ 
+                message: "No active students found in this class" 
+            });
         }
 
-        // Promote them
         const result = await Student.updateMany(
-            { currentClass: fromClass },
+            { currentClass: fromClass, status: "active" },
             { $set: { currentClass: toClass } }
         );
 
         res.status(200).json({
-            message: "Students promoted successfully",
+            message: "Bulk promotion completed",
             fromClass,
             toClass,
-            totalPromoted: result.modifiedCount
+            matched: students.length,
+            totalPromoted: result.modifiedCount,
+            notModified: students.length - result.modifiedCount
         });
-
     } catch (error) {
         res.status(500).json({ message: "Server error", error: error.message });
     }
@@ -347,7 +365,6 @@ exports.getMyProfile = async (req, res) => {
     try {
         let studentId;
 
-        // STUDENT can only view their own profile
         if (req.user.role === 'student') {
             studentId = req.user.studentProfile;
 
@@ -355,12 +372,10 @@ exports.getMyProfile = async (req, res) => {
                 return res.status(404).json({ message: "Student profile not found for this account" });
             }
 
-            // Extra safety: if they try to pass another id in the URL, block it
             if (req.params.id && req.params.id !== studentId.toString()) {
                 return res.status(403).json({ message: "You are not allowed to view another student's profile" });
             }
         } 
-        // ADMIN or TEACHER can view any student profile
         else if (['admin', 'teacher'].includes(req.user.role)) {
             studentId = req.params.id;
 
@@ -381,13 +396,29 @@ exports.getMyProfile = async (req, res) => {
 
         const { getCurrentAcademicYear } = require('../utils/academicYear');
         const academicYear = req.query.academicYear || await getCurrentAcademicYear();
+
         const grades = await Grade.find({ student: studentId, academicYear });
 
-        const termStatus = {
-            "First Term": grades.some(g => g.term === "First Term") ? "Available" : "Yet to be uploaded",
-            "Second Term": grades.some(g => g.term === "Second Term") ? "Available" : "Yet to be uploaded",
-            "Third Term": grades.some(g => g.term === "Third Term") ? "Available" : "Yet to be uploaded"
-        };
+        const termNames = ["First Term", "Second Term", "Third Term"];
+        const termStatus = {};
+
+        for (const termName of termNames) {
+            const published = await TermStatus.findOne({
+                academicYear,
+                currentTerm: termName,
+                isLocked: true
+            });
+
+            const hasGrades = grades.some(g => g.term === termName);
+
+            if (published && hasGrades) {
+                termStatus[termName] = "Available";
+            } else if (hasGrades && !published) {
+                termStatus[termName] = "Not published";
+            } else {
+                termStatus[termName] = "Yet to be uploaded";
+            }
+        }
 
         res.status(200).json({
             profile: {

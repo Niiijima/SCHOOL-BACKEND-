@@ -9,6 +9,8 @@ const {
     getAutomaticAdminComment 
 } = require('../utils/gradeCalculator');
 
+const { getCurrentAcademicYear } = require('../utils/academicYear');
+
 // Helper function
 const getWAECGrade = (avg) => {
     if (avg >= 75) return { annualGrade: 'A1', annualRemark: 'Excellent' };
@@ -61,6 +63,11 @@ exports.submitStudentScores = async (req, res) => {
 
         const Student = require('../models/Student');
 
+        // Default academic year if not provided
+        if (!academicYear) {
+            academicYear = await getCurrentAcademicYear();
+        }
+
         // Find Student
         if (!student && admissionNumber) {
             const studentDoc = await Student.findOne({ admissionNumber });
@@ -107,6 +114,10 @@ exports.submitStudentScores = async (req, res) => {
             });
         }
 
+        if (!term) {
+            return res.status(400).json({ message: "term is required" });
+        }
+
         const termConfig = await TermStatus.findOne({ academicYear, currentTerm: term });
         if (termConfig?.isLocked) {
             return res.status(403).json({ message: "Access Denied: Results for this term are locked." });
@@ -119,7 +130,9 @@ exports.submitStudentScores = async (req, res) => {
         const subjectDetails = await Subject.findById(subject);
         if (!subjectDetails) return res.status(404).json({ message: "Subject not found." });
 
-        const { totalScore, grade, remark } = calculateGrade(subjectDetails.section, test1, test2, test3, assignment, exam);
+        const { totalScore, grade, remark } = calculateGrade(
+            subjectDetails.section, test1, test2, test3, assignment, exam
+        );
 
         const savedGrade = await Grade.findOneAndUpdate(
             { student, subject, term, academicYear },
@@ -180,14 +193,17 @@ exports.toggleTermLock = async (req, res) => {
 exports.getStudentAcademicProfile = async (req, res) => {
     try {
         let studentId = req.params.studentId;
+
+        // Students can only view their own report
         if (req.user?.role === 'student') {
             studentId = req.user.studentProfile;
         }
 
-        const { getCurrentAcademicYear } = require('../utils/academicYear');
+        const term = req.query.term;
         const academicYear = req.query.academicYear || await getCurrentAcademicYear();
+
         if (!academicYear) {
-        return res.status(400).json({ message: "academicYear is required" });
+            return res.status(400).json({ message: "academicYear is required" });
         }
 
         const Student = require('../models/Student');
@@ -290,7 +306,7 @@ exports.getStudentAcademicProfile = async (req, res) => {
                 displayData = {
                     firstTermTotal: firstTermTotal,
                     secondTermTotal: secondTermTotal,
-                    thirdTermTotal: third,
+                    thirdTerm: third, // full breakdown for third term
                     cumulativeSecondTerm: cumulativeSecond,
                     cumulativeThirdTerm: cumulativeThird,
                     annualAverage: annualAverage,
