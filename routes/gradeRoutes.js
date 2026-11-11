@@ -1,17 +1,27 @@
+
 const express = require('express');
 const router = express.Router();
+
 const gradeController = require('../controllers/gradeController');
 const { protect, restrictTo } = require('../middleware/auth');
 
-// Submit scores – only admin (or admin + teacher if needed)
+// Submit scores — admin and teacher only
 router.post(
     '/submit-scores',
     protect,
-    restrictTo('admin', 'teacher'),         
+    restrictTo('admin', 'teacher'),
     gradeController.submitStudentScores
 );
 
-// Toggle term lock – admin only
+// Publish or unpublish results — admin only
+router.patch(
+    '/admin/publish-results',
+    protect,
+    restrictTo('admin'),
+    gradeController.publishTermResults
+);
+
+// Toggle term lock — admin only
 router.patch(
     '/admin/toggle-lock',
     protect,
@@ -19,19 +29,44 @@ router.patch(
     gradeController.toggleTermLock
 );
 
-// Academic profile – any logged-in user (controller still enforces ownership)
+// Student academic profile
 router.get(
     '/student/:studentId/academic-profile',
     protect,
     gradeController.getStudentAcademicProfile
 );
 
-// Optional: students by subject
+// Students by subject — admin and teacher only
 router.get(
     '/subject/:subjectId/students',
     protect,
     restrictTo('admin', 'teacher'),
     gradeController.getStudentsBySubject
 );
+
+// Get all grades — admin and teacher only
+router.get(
+    '/',
+    protect,
+    restrictTo('admin', 'teacher'),
+    gradeController.getAllGrades
+);
+
+// Get term publication and lock statuses — admin only
+router.get(
+    '/admin/term-statuses',
+    protect,
+    restrictTo('admin'),
+    gradeController.getTermStatuses
+);
+
+// Submit multiple subject scores for one student
+router.post(
+    '/submit-multiple-scores',
+    protect,
+    restrictTo('admin', 'teacher'),
+    gradeController.submitMultipleStudentScores
+);
+
 
 module.exports = router;
