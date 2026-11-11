@@ -1,38 +1,45 @@
 const Subject = require('../models/Subject');
 const Student = require('../models/Student');
 
+
 // Create a brand new subject in the curriculum
 exports.createSubject = async (req, res) => {
-    try {
-        const { subjectName, subjectCode, section } = req.body;
+  try {
+    const { name, code, subjectName, subjectCode, section, className } = req.body;
 
-        // Validation for section input
-        if (!section || !['JSS', 'SSS'].includes(section.toUpperCase())) {
-            return res.status(400).json({ message: "Section must be either 'JSS' or 'SSS'." });
-        }
+    const cleanName = String(subjectName || name || "").trim();
+    const cleanCode = String(subjectCode || code || "").trim().toUpperCase();
 
-        // Prevent duplicate subjects using the unique subject code
-        const existingSubject = await Subject.findOne({ subjectCode });
-        if (existingSubject) {
-            return res.status(400).json({ message: "Subject code already exists." });
-        }
-
-        const newSubject = new Subject({
-            subjectName,
-            subjectCode,
-            section: section.toUpperCase() // Saves as uniform uppercase
-        });
-
-        await newSubject.save();
-
-        res.status(201).json({
-            message: "Subject created successfully!",
-            subject: newSubject
-        });
-
-    } catch (error) {
-        res.status(500).json({ message: "Server error", error: error.message });
+    // Decide section from body or from className
+    let cleanSection = String(section || "").trim().toUpperCase();
+    if (!cleanSection && className) {
+      const cls = String(className).trim().toUpperCase();
+      cleanSection = ["SS1", "SS2", "SS3"].includes(cls) ? "SSS" : "JSS";
     }
+    if (!cleanSection) cleanSection = "JSS";
+
+    if (!cleanName || !cleanCode) {
+      return res.status(400).json({
+        message: "Subject name and code are required",
+      });
+    }
+
+    const subject = await Subject.create({
+      subjectName: cleanName,
+      subjectCode: cleanCode,
+      section: cleanSection,
+    });
+
+    return res.status(201).json({
+      message: "Subject created successfully",
+      subject,
+    });
+  } catch (err) {
+    console.error("createSubject error:", err);
+    return res.status(500).json({
+      message: err.message || "Failed to create subject",
+    });
+  }
 };
 
 // Retrieve all subjects in the school
@@ -100,4 +107,61 @@ exports.enrollStudent = async (req, res) => {
     } catch (error) {
         res.status(500).json({ message: "Server error", error: error.message });
     }
+};
+
+//create subjects in bulk for multiple classes
+exports.createSubjectBulk = async (req, res) => {
+  try {
+    const { name, code, subjectName, subjectCode, sections } = req.body;
+
+    const cleanName = String(subjectName || name || "").trim();
+    const cleanCode = String(subjectCode || code || "").trim().toUpperCase();
+
+    // Default: junior section only
+    const targetSections =
+      Array.isArray(sections) && sections.length
+        ? sections.map((s) => String(s).trim().toUpperCase())
+        : ["JSS"];
+
+    if (!cleanName || !cleanCode) {
+      return res.status(400).json({
+        message: "Subject name and code are required",
+      });
+    }
+
+    const created = [];
+    const skipped = [];
+
+    for (const section of targetSections) {
+      const existing = await Subject.findOne({
+        subjectCode: cleanCode,
+        section,
+      });
+
+      if (existing) {
+        skipped.push(section);
+        continue;
+      }
+
+      const subject = await Subject.create({
+        subjectName: cleanName,
+        subjectCode: cleanCode,
+        section,
+      });
+      created.push(subject);
+    }
+
+    return res.status(201).json({
+      message: `Created for ${created.length} section(s)${
+        skipped.length ? `; skipped: ${skipped.join(", ")}` : ""
+      }`,
+      subjects: created,
+      skipped,
+    });
+  } catch (err) {
+    console.error("createSubjectBulk error:", err);
+    return res.status(500).json({
+      message: err.message || "Failed to create subjects",
+    });
+  }
 };
