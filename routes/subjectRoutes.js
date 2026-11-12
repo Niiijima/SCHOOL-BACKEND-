@@ -48,4 +48,19 @@ router.post(
     subjectController.enrollStudent
 );
 
+router.get(
+    '/:subjectId/eligible-students',
+    protect,
+    restrictTo('admin'),
+    subjectController.getSubjectEligibleStudents
+);
+
+router.patch(
+    '/:subjectId/students/:studentId/exclusion',
+    protect,
+    restrictTo('admin'),
+    subjectController.updateStudentSubjectExclusion
+);
+
+
 module.exports = router;
