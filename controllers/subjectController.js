@@ -1,103 +1,452 @@
+
 const Subject = require('../models/Subject');
 const Student = require('../models/Student');
 
-// Create a brand new subject in the curriculum
+const ALLOWED_CLASSES = [
+    'JSS1',
+    'JSS2',
+    'JSS3',
+    'SS1',
+    'SS2',
+    'SS3'
+];
+
+const ALLOWED_DEPARTMENTS = [
+    'Science',
+    'Arts',
+    'Commercial'
+];
+
+// Only SS2 and SS3 require departments.
+const requiresDepartment = (className) => {
+    return ['SS2', 'SS3'].includes(
+        String(className || '').trim().toUpperCase()
+    );
+};
+
+// Normalize department names.
+const normalizeDepartment = (department) => {
+    if (!department) return null;
+
+    const value = String(department).trim();
+
+    if (value.toLowerCase() === 'art') return 'Arts';
+
+    const match = ALLOWED_DEPARTMENTS.find(
+        (item) => item.toLowerCase() === value.toLowerCase()
+    );
+
+    return match || value;
+};
+
+// Convert class name into its section.
+const getSection = (className) => {
+    const normalizedClass = String(className || '')
+        .trim()
+        .toUpperCase();
+
+    if (normalizedClass.startsWith('JSS')) return 'JSS';
+    if (normalizedClass.startsWith('SS')) return 'SSS';
+
+    return null;
+};
+
+// Validate and normalize class assignments.
+const validateAssignments = (assignments) => {
+    if (!Array.isArray(assignments) || assignments.length === 0) {
+        throw new Error('At least one class assignment is required.');
+    }
+
+    const seen = new Set();
+
+    return assignments.map((assignment) => {
+        const className = String(assignment.className || '')
+            .trim()
+            .toUpperCase();
+
+        const department = normalizeDepartment(assignment.department);
+
+        if (!ALLOWED_CLASSES.includes(className)) {
+            throw new Error(`Invalid class: ${className}`);
+        }
+
+        // SS2 and SS3 require a valid department.
+        if (requiresDepartment(className)) {
+            if (!ALLOWED_DEPARTMENTS.includes(department)) {
+                throw new Error(
+                    `${className} requires a valid department: Science, Arts, or Commercial.`
+                );
+            }
+        } else {
+            // JSS1-JSS3 and SS1 must not have departments.
+            if (department) {
+                throw new Error(
+                    `${className} should not have a department.`
+                );
+            }
+        }
+
+        const key = `${className}-${department || 'GENERAL'}`;
+
+        if (seen.has(key)) {
+            throw new Error(`Duplicate class assignment: ${key}`);
+        }
+
+        seen.add(key);
+
+        return {
+            className,
+            department: requiresDepartment(className)
+                ? department
+                : null
+        };
+    });
+};
+
+// Support the old frontend payload while accepting the new structure.
+const getAssignmentsFromBody = (body) => {
+    if (Array.isArray(body.classAssignments)) {
+        return validateAssignments(body.classAssignments);
+    }
+
+    if (body.className) {
+        return validateAssignments([
+            {
+                className: body.className,
+                department: body.department || null
+            }
+        ]);
+    }
+
+    throw new Error('Class assignments are required.');
+};
+
+// Check whether a subject is assigned to a student's class and department.
+const isSubjectAssignedToStudent = (subject, student) => {
+    if (!Array.isArray(subject.classAssignments)) {
+        return false;
+    }
+
+    const studentClass = String(student.currentClass || '')
+        .trim()
+        .toUpperCase();
+
+    const studentDepartment = normalizeDepartment(student.department);
+
+    if (!studentClass) return false;
+
+    return subject.classAssignments.some((assignment) => {
+        const assignedClass = String(assignment.className || '')
+            .trim()
+            .toUpperCase();
+
+        if (assignedClass !== studentClass) {
+            return false;
+        }
+
+        // JSS1-JSS3 and SS1 do not require departments.
+        if (!requiresDepartment(studentClass)) {
+            return true;
+        }
+
+        // SS2 and SS3 must match the student's department.
+        return normalizeDepartment(assignment.department) === studentDepartment;
+    });
+};
+
+// CREATE SUBJECT
 exports.createSubject = async (req, res) => {
     try {
-        const { subjectName, subjectCode, section } = req.body;
+        const subjectName = String(
+            req.body.subjectName || req.body.name || ''
+        ).trim();
 
-        // Validation for section input
-        if (!section || !['JSS', 'SSS'].includes(section.toUpperCase())) {
-            return res.status(400).json({ message: "Section must be either 'JSS' or 'SSS'." });
+        const subjectCode = String(
+            req.body.subjectCode || req.body.code || ''
+        ).trim().toUpperCase();
+
+        if (!subjectName || !subjectCode) {
+            return res.status(400).json({
+                success: false,
+                message: 'Subject name and subject code are required.'
+            });
         }
 
-        // Prevent duplicate subjects using the unique subject code
+        const classAssignments = getAssignmentsFromBody(req.body);
+
         const existingSubject = await Subject.findOne({ subjectCode });
+
         if (existingSubject) {
-            return res.status(400).json({ message: "Subject code already exists." });
+            return res.status(409).json({
+                success: false,
+                message: 'A subject with this code already exists.'
+            });
         }
 
-        const newSubject = new Subject({
+        const section =
+            req.body.section ||
+            getSection(classAssignments[0].className);
+
+        if (!['JSS', 'SSS'].includes(section)) {
+            return res.status(400).json({
+                success: false,
+                message: 'A valid section (JSS or SSS) is required.'
+            });
+        }
+
+        const subject = await Subject.create({
             subjectName,
             subjectCode,
-            section: section.toUpperCase() // Saves as uniform uppercase
+            section,
+            classAssignments
         });
 
-        await newSubject.save();
-
-        res.status(201).json({
-            message: "Subject created successfully!",
-            subject: newSubject
+        return res.status(201).json({
+            success: true,
+            message: 'Subject created successfully.',
+            subject
         });
 
     } catch (error) {
-        res.status(500).json({ message: "Server error", error: error.message });
+        if (error.code === 11000) {
+            return res.status(409).json({
+                success: false,
+                message: 'A subject with this code already exists.'
+            });
+        }
+
+        return res.status(400).json({
+            success: false,
+            message: error.message
+        });
     }
 };
 
-// Retrieve all subjects in the school
+// GET ALL SUBJECTS
 exports.getAllSubjects = async (req, res) => {
     try {
         const subjects = await Subject.find()
-            .populate('teacher', 'name email') // Pulls in teacher details when we build teachers
-            .populate('enrolledStudents', 'name email phone'); // Pulls in registered student details
+            .populate('teacher', 'name email')
+            .populate('enrolledStudents', 'name email phone admissionNumber');
 
-        res.status(200).json(subjects);
-    } catch (error) {
-        res.status(500).json({ message: "Server error", error: error.message });
-    }
-};
-exports.enrollStudent = async (req, res) => {
-    try {
-        const { subjectCode, admissionNumber, subjectId, studentId } = req.body;
-
-        // Find Subject
-        let subject;
-        if (subjectCode) {
-            subject = await Subject.findOne({ subjectCode: subjectCode.toUpperCase() });
-        } else if (subjectId) {
-            subject = await Subject.findById(subjectId);
-        }
-
-        if (!subject) {
-            return res.status(404).json({ message: "Subject not found" });
-        }
-
-        // Find Student
-        let student;
-        if (admissionNumber) {
-            student = await Student.findOne({ admissionNumber });
-        } else if (studentId) {
-            student = await Student.findById(studentId);
-        }
-
-        if (!student) {
-            return res.status(404).json({ message: "Student not found" });
-        }
-
-        // Check if already enrolled
-        if (subject.enrolledStudents.includes(student._id)) {
-            return res.status(400).json({ message: "Student is already enrolled in this subject" });
-        }
-
-        // Enroll
-        subject.enrolledStudents.push(student._id);
-        await subject.save();
-
-        res.status(200).json({
-            message: "Student enrolled successfully",
-            subject: {
-                subjectName: subject.subjectName,
-                subjectCode: subject.subjectCode,
-                enrolledCount: subject.enrolledStudents.length
-            },
-            student: {
-                name: student.name,
-                admissionNumber: student.admissionNumber
-            }
+        return res.status(200).json({
+            success: true,
+            count: subjects.length,
+            subjects
         });
 
     } catch (error) {
-        res.status(500).json({ message: "Server error", error: error.message });
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to retrieve subjects.',
+            error: error.message
+        });
+    }
+};
+
+// UPDATE SUBJECT CLASS AND DEPARTMENT ASSIGNMENTS
+exports.updateSubjectAssignments = async (req, res) => {
+    try {
+        const { subjectId } = req.params;
+
+        const classAssignments = getAssignmentsFromBody(req.body);
+
+        const subject = await Subject.findById(subjectId);
+
+        if (!subject) {
+            return res.status(404).json({
+                success: false,
+                message: 'Subject not found.'
+            });
+        }
+
+        subject.classAssignments = classAssignments;
+
+        // Keep the legacy section field populated.
+        subject.section =
+            getSection(classAssignments[0].className) ||
+            subject.section;
+
+        await subject.save();
+
+        return res.status(200).json({
+            success: true,
+            message: 'Subject assignments updated successfully.',
+            subject
+        });
+
+    } catch (error) {
+        return res.status(400).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
+// ENROLL A STUDENT IN A SUBJECT
+exports.enrollStudent = async (req, res) => {
+    try {
+        const {
+            subjectId,
+            subjectCode,
+            studentId,
+            admissionNumber
+        } = req.body;
+
+        let subject;
+
+        if (subjectId) {
+            subject = await Subject.findById(subjectId);
+        } else if (subjectCode) {
+            subject = await Subject.findOne({
+                subjectCode: String(subjectCode).trim().toUpperCase()
+            });
+        }
+
+        if (!subject) {
+            return res.status(404).json({
+                success: false,
+                message: 'Subject not found.'
+            });
+        }
+
+        let student;
+
+        if (studentId) {
+            student = await Student.findById(studentId);
+        } else if (admissionNumber) {
+            student = await Student.findOne({ admissionNumber });
+        }
+
+        if (!student) {
+            return res.status(404).json({
+                success: false,
+                message: 'Student not found.'
+            });
+        }
+
+        // Prevent enrollment in subjects not assigned to the student's class.
+        if (!isSubjectAssignedToStudent(subject, student)) {
+            return res.status(403).json({
+                success: false,
+                message: `${subject.subjectName} is not assigned to ${student.currentClass}${requiresDepartment(student.currentClass) && student.department ? ` (${student.department})` : ''}.`
+            });
+        }
+
+        const alreadyEnrolled = subject.enrolledStudents.some(
+            (id) => id.toString() === student._id.toString()
+        );
+
+        if (!alreadyEnrolled) {
+            subject.enrolledStudents.push(student._id);
+            await subject.save();
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: alreadyEnrolled
+                ? 'Student is already enrolled in this subject.'
+                : 'Student enrolled successfully.',
+            subject
+        });
+
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to enroll student.',
+            error: error.message
+        });
+    }
+};
+
+// BULK CREATE SUBJECTS
+// Each subject is created once, with all its assignments.
+exports.createSubjectBulk = async (req, res) => {
+    try {
+        const subjects = req.body.subjects;
+
+        if (!Array.isArray(subjects) || subjects.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Please provide a non-empty subjects array.'
+            });
+        }
+
+        const preparedSubjects = subjects.map((item) => {
+            const subjectName = String(
+                item.subjectName || item.name || ''
+            ).trim();
+
+            const subjectCode = String(
+                item.subjectCode || item.code || ''
+            ).trim().toUpperCase();
+
+            if (!subjectName || !subjectCode) {
+                throw new Error(
+                    'Every subject must have a name and subject code.'
+                );
+            }
+
+            const classAssignments = getAssignmentsFromBody(item);
+
+            const section =
+                item.section ||
+                getSection(classAssignments[0].className);
+
+            if (!['JSS', 'SSS'].includes(section)) {
+                throw new Error(
+                    `Invalid section for subject: ${subjectName}.`
+                );
+            }
+
+            return {
+                subjectName,
+                subjectCode,
+                section,
+                classAssignments
+            };
+        });
+
+        const codes = preparedSubjects.map(
+            (item) => item.subjectCode
+        );
+
+        if (new Set(codes).size !== codes.length) {
+            return res.status(400).json({
+                success: false,
+                message: 'Duplicate subject codes found in the request.'
+            });
+        }
+
+        const existingSubjects = await Subject.find({
+            subjectCode: { $in: codes }
+        });
+
+        if (existingSubjects.length > 0) {
+            return res.status(409).json({
+                success: false,
+                message: 'Some subject codes already exist.',
+                existingCodes: existingSubjects.map(
+                    (subject) => subject.subjectCode
+                )
+            });
+        }
+
+        const createdSubjects = await Subject.insertMany(
+            preparedSubjects
+        );
+
+        return res.status(201).json({
+            success: true,
+            message: 'Subjects created successfully.',
+            count: createdSubjects.length,
+            subjects: createdSubjects
+        });
+
+    } catch (error) {
+        return res.status(400).json({
+            success: false,
+            message: error.message
+        });
     }
 };
