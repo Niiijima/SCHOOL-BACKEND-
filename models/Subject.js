@@ -68,14 +68,12 @@ const subjectSchema = new mongoose.Schema(
             uppercase: true
         },
 
-        // Retained for compatibility with existing grade logic.
         section: {
             type: String,
             required: true,
             enum: ['JSS', 'SSS']
         },
 
-        // A subject can belong to multiple classes and departments.
         classAssignments: {
             type: [classAssignmentSchema],
             default: []
@@ -92,12 +90,19 @@ const subjectSchema = new mongoose.Schema(
                 type: mongoose.Schema.Types.ObjectId,
                 ref: 'Student'
             }
+        ],
+
+        // Students individually excluded from this subject.
+        excludedStudents: [
+            {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: 'Student'
+            }
         ]
     },
     { timestamps: true }
 );
 
-// Clean up departments on assignments for JSS classes and SS1.
 subjectSchema.pre('validate', function () {
     this.classAssignments.forEach((assignment) => {
         if (!requiresDepartment(assignment.className)) {

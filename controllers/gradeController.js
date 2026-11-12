@@ -1,3 +1,4 @@
+
 const mongoose = require('mongoose');
 const Grade = require('../models/Grade');
 const Subject = require('../models/Subject');
@@ -31,22 +32,48 @@ const getWAECGrade = (avg) => {
 
 const normalizeDepartment = (department) => {
     if (!department) return null;
+
     const value = String(department).trim();
+
     if (value.toLowerCase() === 'art') return 'Arts';
+
     return value;
 };
 
 const requiresDepartment = (className) => {
-    const normalizedClass = String(className || '').trim().toUpperCase();
+    const normalizedClass = String(className || '')
+        .trim()
+        .toUpperCase();
+
     return ['SS2', 'SS3'].includes(normalizedClass);
 };
 
+// Check whether a student has been individually excluded from a subject.
+const isStudentExcludedFromSubject = (subject, student) => {
+    if (!subject || !student?._id) return false;
+
+    const studentId = student._id.toString();
+
+    return (subject.excludedStudents || []).some(
+        (id) => id.toString() === studentId
+    );
+};
+
+// Check whether a subject is assigned to a student's class and department.
+// Individual exclusions are also respected.
 const isSubjectAssignedToStudent = (subject, student) => {
-    if (!subject.classAssignments || subject.classAssignments.length === 0) {
+    if (!subject || !student || !Array.isArray(subject.classAssignments)) {
         return false;
     }
 
-    const studentClass = String(student.currentClass || '').trim().toUpperCase();
+    if (isStudentExcludedFromSubject(subject, student)) {
+        return false;
+    }
+
+    const studentClass = String(student.currentClass || '')
+        .trim()
+        .toUpperCase();
+
     const studentDepartment = normalizeDepartment(student.department);
 
     if (!studentClass) return false;
@@ -56,17 +83,30 @@ const isSubjectAssignedToStudent = (subject, student) => {
             .trim()
             .toUpperCase();
 
-        if (assignedClass !== studentClass) return false;
-        if (!requiresDepartment(studentClass)) return true;
+        if (assignedClass !== studentClass) {
+            return false;
+        }
 
-        return normalizeDepartment(assignment.department) === studentDepartment;
+        if (!requiresDepartment(studentClass)) {
+            return true;
+        }
+
+        return (
+            normalizeDepartment(assignment.department) ===
+            studentDepartment
+        );
     });
 };
 
 const getStudentSection = (student) => {
-    const currentClass = String(student.currentClass || '').trim().toUpperCase();
+    const currentClass = String(student.currentClass || '')
+        .trim()
+        .toUpperCase();
+
     if (currentClass.startsWith('JSS')) return 'JSS';
+
     if (currentClass.startsWith('SS')) return 'SSS';
+
     return null;
 };
 
@@ -93,24 +133,49 @@ exports.getStudentsBySubject = async (req, res) => {
     try {
         const { subjectId } = req.params;
 
+        if (!mongoose.Types.ObjectId.isValid(subjectId)) {
+            return res.status(400).json({
+                message: 'Invalid subject ID.',
+            });
+        }
+
         const subjectData = await Subject.findById(subjectId).populate(
             'enrolledStudents',
             'name firstName surname email admissionNumber currentClass department'
         );
 
         if (!subjectData) {
-            return res.status(404).json({ message: 'Subject not found.' });
+            return res.status(404).json({
+                message: 'Subject not found.',
+            });
         }
+
+        // Remove individually excluded students from the returned list.
+        const excludedIds = new Set(
+            (subjectData.excludedStudents || []).map((id) =>
+                id.toString()
+            )
+        );
+
+        const availableStudents = (
+            subjectData.enrolledStudents || []
+        ).filter((student) => {
+            return (
+                student &&
+                !excludedIds.has(student._id.toString())
+            );
+        });
 
         return res.status(200).json({
             subjectName: subjectData.subjectName,
             subjectCode: subjectData.subjectCode,
             section: subjectData.section,
             classAssignments: subjectData.classAssignments,
-            students: subjectData.enrolledStudents,
+            students: availableStudents,
         });
     } catch (error) {
         console.error('Get Students By Subject Error:', error);
+
         return res.status(500).json({
             message: 'Server error',
             error: error.message,
@@ -145,16 +210,20 @@ exports.submitStudentScores = async (req, res) => {
             academicYear = await getCurrentAcademicYear();
         }
 
+        // Find student using admission number if no student ID is supplied.
         if (!student && admissionNumber) {
             const studentDoc = await Student.findOne({ admissionNumber });
+
             if (!studentDoc) {
                 return res.status(404).json({
                     message: `Student not found: ${admissionNumber}`,
                 });
             }
+
             student = studentDoc._id;
         }
 
+        // Find student using name if no student ID is supplied.
         if (!student && studentName) {
             const studentDoc = await Student.findOne({
                 $or: [
@@ -163,35 +232,43 @@ exports.submitStudentScores = async (req, res) => {
                     { surname: { $regex: studentName, $options: 'i' } },
                 ],
             });
+
             if (!studentDoc) {
                 return res.status(404).json({
                     message: `Student not found: ${studentName}`,
                 });
             }
+
             student = studentDoc._id;
         }
 
+        // Find subject using subject code if no subject ID is supplied.
         if (!subject && subjectCode) {
             const subjectDoc = await Subject.findOne({
                 subjectCode: String(subjectCode).toUpperCase(),
             });
+
             if (!subjectDoc) {
                 return res.status(404).json({
                     message: `Subject not found: ${subjectCode}`,
                 });
             }
+
             subject = subjectDoc._id;
         }
 
+        // Find subject using subject name if no subject ID is supplied.
         if (!subject && subjectName) {
             const subjectDoc = await Subject.findOne({
                 subjectName: { $regex: subjectName, $options: 'i' },
             });
+
             if (!subjectDoc) {
                 return res.status(404).json({
                     message: `Subject not found: ${subjectName}`,
                 });
             }
+
             subject = subjectDoc._id;
         }
 
@@ -202,32 +279,57 @@ exports.submitStudentScores = async (req, res) => {
             });
         }
 
+        if (!mongoose.Types.ObjectId.isValid(student) ||
+            !mongoose.Types.ObjectId.isValid(subject)) {
+            return res.status(400).json({
+                message: 'Invalid student or subject ID.',
+            });
+        }
+
         if (!term) {
-            return res.status(400).json({ message: 'term is required.' });
+            return res.status(400).json({
+                message: 'term is required.',
+            });
         }
 
         if (!['First Term', 'Second Term', 'Third Term'].includes(term)) {
-            return res.status(400).json({ message: 'Invalid term supplied.' });
+            return res.status(400).json({
+                message: 'Invalid term supplied.',
+            });
         }
 
         const studentDetails = await Student.findById(student);
         const subjectDetails = await Subject.findById(subject);
 
         if (!studentDetails) {
-            return res.status(404).json({ message: 'Student not found.' });
+            return res.status(404).json({
+                message: 'Student not found.',
+            });
         }
 
         if (!subjectDetails) {
-            return res.status(404).json({ message: 'Subject not found.' });
+            return res.status(404).json({
+                message: 'Subject not found.',
+            });
         }
 
         const studentSection = getStudentSection(studentDetails);
+
         if (!studentSection) {
             return res.status(400).json({
                 message: 'The student does not have a valid current class.',
             });
         }
 
+        // Explicitly reject students excluded from this subject.
+        if (isStudentExcludedFromSubject(subjectDetails, studentDetails)) {
+            return res.status(403).json({
+                message: `${studentDetails.firstName} ${studentDetails.surname} is excluded from ${subjectDetails.subjectName}. Score submission is not allowed.`,
+                excluded: true,
+            });
+        }
+
+        // Confirm that the subject is assigned to the student's class/department.
         if (!isSubjectAssignedToStudent(subjectDetails, studentDetails)) {
             return res.status(403).json({
                 message: `${subjectDetails.subjectName} is not assigned to ${studentDetails.currentClass}${
@@ -250,10 +352,21 @@ exports.submitStudentScores = async (req, res) => {
             });
         }
 
-        const scoreValues = [test1, test2, test3, assignment, exam];
+        const scoreValues = [
+            test1,
+            test2,
+            test3,
+            assignment,
+            exam,
+        ];
+
         const hasInvalidScore = scoreValues.some((score) => {
-            if (score === undefined || score === null || score === '') return false;
+            if (score === undefined || score === null || score === '') {
+                return false;
+            }
+
             const value = Number(score);
+
             return !Number.isFinite(value) || value < 0;
         });
 
@@ -309,7 +422,11 @@ exports.submitStudentScores = async (req, res) => {
                         : null,
                 gradedBy: req.user?.id,
             },
-            { new: true, upsert: true, runValidators: true }
+            {
+                new: true,
+                upsert: true,
+                runValidators: true,
+            }
         );
 
         return res.status(200).json({
@@ -318,6 +435,7 @@ exports.submitStudentScores = async (req, res) => {
         });
     } catch (error) {
         console.error('Submit Scores Error:', error);
+
         return res.status(500).json({
             message: 'Server error',
             error: error.message,
@@ -358,13 +476,17 @@ exports.submitMultipleStudentScores = async (req, res) => {
         }
 
         const year = academicYear || (await getCurrentAcademicYear());
+
         const student = await Student.findById(studentId);
 
         if (!student) {
-            return res.status(404).json({ message: 'Student not found.' });
+            return res.status(404).json({
+                message: 'Student not found.',
+            });
         }
 
         const studentSection = getStudentSection(student);
+
         if (!studentSection) {
             return res.status(400).json({
                 message: 'The student does not have a valid current class.',
@@ -384,7 +506,11 @@ exports.submitMultipleStudentScores = async (req, res) => {
 
         const subjectIds = scores.map((item) => item.subject);
 
-        if (subjectIds.some((id) => !id || !mongoose.Types.ObjectId.isValid(id))) {
+        if (
+            subjectIds.some(
+                (id) => !id || !mongoose.Types.ObjectId.isValid(id)
+            )
+        ) {
             return res.status(400).json({
                 message: 'One or more subject IDs are invalid.',
             });
@@ -392,13 +518,20 @@ exports.submitMultipleStudentScores = async (req, res) => {
 
         if (new Set(subjectIds.map(String)).size !== subjectIds.length) {
             return res.status(400).json({
-                message: 'A subject cannot appear more than once in the same submission.',
+                message:
+                    'A subject cannot appear more than once in the same submission.',
             });
         }
 
-        const subjects = await Subject.find({ _id: { $in: subjectIds } });
+        const subjects = await Subject.find({
+            _id: { $in: subjectIds },
+        });
+
         const subjectMap = new Map(
-            subjects.map((subject) => [subject._id.toString(), subject])
+            subjects.map((subject) => [
+                subject._id.toString(),
+                subject,
+            ])
         );
 
         if (subjects.length !== subjectIds.length) {
@@ -412,17 +545,33 @@ exports.submitMultipleStudentScores = async (req, res) => {
         for (const item of scores) {
             const subject = subjectMap.get(String(item.subject));
 
+            // Reject individually excluded students.
+            if (isStudentExcludedFromSubject(subject, student)) {
+                return res.status(403).json({
+                    message: `This student is excluded from ${subject.subjectName}. Score submission is not allowed.`,
+                    excluded: true,
+                });
+            }
+
             if (!isSubjectAssignedToStudent(subject, student)) {
                 return res.status(403).json({
                     message: `${subject.subjectName} is not assigned to this student's class or department.`,
                 });
             }
 
-            const fields = ['test1', 'test2', 'test3', 'assignment', 'exam'];
+            const fields = [
+                'test1',
+                'test2',
+                'test3',
+                'assignment',
+                'exam',
+            ];
+
             const values = {};
 
             for (const field of fields) {
                 const value = item[field];
+
                 if (
                     value === undefined ||
                     value === null ||
@@ -434,11 +583,15 @@ exports.submitMultipleStudentScores = async (req, res) => {
                         message: `Please provide a valid ${field} score for ${subject.subjectName}.`,
                     });
                 }
+
                 values[field] = Number(value);
             }
 
             const totalCA =
-                values.test1 + values.test2 + values.test3 + values.assignment;
+                values.test1 +
+                values.test2 +
+                values.test3 +
+                values.assignment;
 
             if (totalCA > 40) {
                 return res.status(400).json({
@@ -488,7 +641,9 @@ exports.submitMultipleStudentScores = async (req, res) => {
             });
         }
 
-        await Grade.bulkWrite(operations, { ordered: true });
+        await Grade.bulkWrite(operations, {
+            ordered: true,
+        });
 
         const savedGrades = await Grade.find({
             student: student._id,
@@ -511,6 +666,7 @@ exports.submitMultipleStudentScores = async (req, res) => {
         });
     } catch (error) {
         console.error('Submit Multiple Student Scores Error:', error);
+
         return res.status(500).json({
             message: 'Failed to submit student scores.',
             error: error.message,
@@ -526,14 +682,21 @@ exports.publishTermResults = async (req, res) => {
     try {
         const { academicYear, currentTerm, isPublished } = req.body;
 
-        if (!academicYear || !currentTerm || typeof isPublished !== 'boolean') {
+        if (
+            !academicYear ||
+            !currentTerm ||
+            typeof isPublished !== 'boolean'
+        ) {
             return res.status(400).json({
-                message: 'academicYear, currentTerm and isPublished are required.',
+                message:
+                    'academicYear, currentTerm and isPublished are required.',
             });
         }
 
         if (!['First Term', 'Second Term', 'Third Term'].includes(currentTerm)) {
-            return res.status(400).json({ message: 'Invalid term supplied.' });
+            return res.status(400).json({
+                message: 'Invalid term supplied.',
+            });
         }
 
         const gradeCount = await Grade.countDocuments({
@@ -572,6 +735,7 @@ exports.publishTermResults = async (req, res) => {
         });
     } catch (error) {
         console.error('Publish Term Results Error:', error);
+
         return res.status(500).json({
             message: 'Failed to update result publication status.',
             error: error.message,
@@ -580,19 +744,32 @@ exports.publishTermResults = async (req, res) => {
 };
 
 // ======================================================
-// TOGGLE TERM LOCK (global — blocks score entry)
+// TOGGLE TERM LOCK (GLOBAL — BLOCKS SCORE ENTRY)
 // ======================================================
 
 exports.toggleTermLock = async (req, res) => {
     try {
-        const { academicYear, currentTerm, isLocked, nextTermBegins } = req.body;
+        const {
+            academicYear,
+            currentTerm,
+            isLocked,
+            nextTermBegins,
+        } = req.body;
 
-        if (!academicYear || !currentTerm || typeof isLocked !== 'boolean') {
-            return res.status(400).json({ message: 'Missing required fields.' });
+        if (
+            !academicYear ||
+            !currentTerm ||
+            typeof isLocked !== 'boolean'
+        ) {
+            return res.status(400).json({
+                message: 'Missing required fields.',
+            });
         }
 
         if (!['First Term', 'Second Term', 'Third Term'].includes(currentTerm)) {
-            return res.status(400).json({ message: 'Invalid term supplied.' });
+            return res.status(400).json({
+                message: 'Invalid term supplied.',
+            });
         }
 
         const updatedStatus = await TermStatus.findOneAndUpdate(
@@ -603,23 +780,31 @@ exports.toggleTermLock = async (req, res) => {
                     nextTermBegins: nextTermBegins || '',
                 },
             },
-            { new: true, upsert: true, runValidators: true }
+            {
+                new: true,
+                upsert: true,
+                runValidators: true,
+            }
         );
 
         let newAcademicYear = null;
 
         if (currentTerm === 'Third Term' && isLocked === true) {
             const { advanceAcademicYear } = require('../utils/academicYear');
+
             newAcademicYear = await advanceAcademicYear(academicYear);
         }
 
         return res.status(200).json({
-            message: `Term ${currentTerm} has been ${isLocked ? 'LOCKED' : 'UNLOCKED'}.`,
+            message: `Term ${currentTerm} has been ${
+                isLocked ? 'LOCKED' : 'UNLOCKED'
+            }.`,
             status: updatedStatus,
             newAcademicYear,
         });
     } catch (error) {
         console.error('Toggle Term Lock Error:', error);
+
         return res.status(500).json({
             message: 'Server error',
             error: error.message,
@@ -629,26 +814,42 @@ exports.toggleTermLock = async (req, res) => {
 
 // ======================================================
 // INDIVIDUAL STUDENT RESULT LOCK
-// (hides results even if term is published)
 // ======================================================
 
 exports.setStudentResultLock = async (req, res) => {
     try {
-        const { studentId, academicYear, term, isLocked, reason } = req.body;
+        const {
+            studentId,
+            academicYear,
+            term,
+            isLocked,
+            reason,
+        } = req.body;
 
-        if (!studentId || !academicYear || !term || typeof isLocked !== 'boolean') {
+        if (
+            !studentId ||
+            !academicYear ||
+            !term ||
+            typeof isLocked !== 'boolean'
+        ) {
             return res.status(400).json({
-                message: 'studentId, academicYear, term and isLocked are required.',
+                message:
+                    'studentId, academicYear, term and isLocked are required.',
             });
         }
 
         if (!['First Term', 'Second Term', 'Third Term'].includes(term)) {
-            return res.status(400).json({ message: 'Invalid term supplied.' });
+            return res.status(400).json({
+                message: 'Invalid term supplied.',
+            });
         }
 
         const student = await Student.findById(studentId);
+
         if (!student) {
-            return res.status(404).json({ message: 'Student not found.' });
+            return res.status(404).json({
+                message: 'Student not found.',
+            });
         }
 
         const lock = await ResultLock.findOneAndUpdate(
@@ -660,7 +861,11 @@ exports.setStudentResultLock = async (req, res) => {
                     lockedBy: req.user?.id,
                 },
             },
-            { new: true, upsert: true, runValidators: true }
+            {
+                new: true,
+                upsert: true,
+                runValidators: true,
+            }
         );
 
         return res.status(200).json({
@@ -671,6 +876,7 @@ exports.setStudentResultLock = async (req, res) => {
         });
     } catch (error) {
         console.error('setStudentResultLock error:', error);
+
         return res.status(500).json({
             message: 'Failed to update student result lock.',
             error: error.message,
@@ -681,13 +887,18 @@ exports.setStudentResultLock = async (req, res) => {
 exports.getStudentResultLocks = async (req, res) => {
     try {
         const { studentId, academicYear } = req.query;
+
         const filter = {};
 
         if (studentId) filter.student = studentId;
+
         if (academicYear) filter.academicYear = academicYear;
 
         const locks = await ResultLock.find(filter)
-            .populate('student', 'name admissionNumber currentClass department')
+            .populate(
+                'student',
+                'name admissionNumber currentClass department'
+            )
             .sort({ updatedAt: -1 });
 
         return res.status(200).json({
@@ -696,6 +907,7 @@ exports.getStudentResultLocks = async (req, res) => {
         });
     } catch (error) {
         console.error('getStudentResultLocks error:', error);
+
         return res.status(500).json({
             message: 'Failed to load result locks.',
             error: error.message,
@@ -710,6 +922,7 @@ exports.getStudentResultLocks = async (req, res) => {
 exports.getStudentAcademicProfile = async (req, res) => {
     try {
         let studentId = req.params.studentId;
+
         const isStudent = req.user?.role === 'student';
 
         if (isStudent) {
@@ -717,26 +930,37 @@ exports.getStudentAcademicProfile = async (req, res) => {
         }
 
         if (!studentId) {
-            return res.status(400).json({ message: 'Student ID is required.' });
+            return res.status(400).json({
+                message: 'Student ID is required.',
+            });
         }
 
         const term = req.query.term;
 
-        if (term && !['First Term', 'Second Term', 'Third Term'].includes(term)) {
-            return res.status(400).json({ message: 'Invalid term supplied.' });
+        if (
+            term &&
+            !['First Term', 'Second Term', 'Third Term'].includes(term)
+        ) {
+            return res.status(400).json({
+                message: 'Invalid term supplied.',
+            });
         }
 
         const academicYear =
             req.query.academicYear || (await getCurrentAcademicYear());
 
         if (!academicYear) {
-            return res.status(400).json({ message: 'academicYear is required.' });
+            return res.status(400).json({
+                message: 'academicYear is required.',
+            });
         }
 
         const student = await Student.findById(studentId);
 
         if (!student) {
-            return res.status(404).json({ message: 'Student not found.' });
+            return res.status(404).json({
+                message: 'Student not found.',
+            });
         }
 
         let rawGrades = await Grade.find({
@@ -753,7 +977,7 @@ exports.getStudentAcademicProfile = async (req, res) => {
             });
         }
 
-        // 1) Students only see published terms
+        // 1. Students only see published terms.
         if (isStudent) {
             const publishedStatuses = await TermStatus.find({
                 academicYear,
@@ -775,7 +999,7 @@ exports.getStudentAcademicProfile = async (req, res) => {
                 });
             }
 
-            // 2) Individual student locks (even if term is published)
+            // 2. Individual student result locks.
             const lockFilter = {
                 student: studentId,
                 academicYear,
@@ -799,7 +1023,10 @@ exports.getStudentAcademicProfile = async (req, res) => {
                     });
                 }
             } else {
-                const lockedTerms = new Set(locks.map((l) => l.term));
+                const lockedTerms = new Set(
+                    locks.map((lock) => lock.term)
+                );
+
                 if (lockedTerms.size > 0) {
                     rawGrades = rawGrades.filter(
                         (grade) => !lockedTerms.has(grade.term)
@@ -855,6 +1082,7 @@ exports.getStudentAcademicProfile = async (req, res) => {
         });
 
         const reportCardSummary = [];
+
         let totalAnnualScore = 0;
         let subjectCount = 0;
 
@@ -865,6 +1093,7 @@ exports.getStudentAcademicProfile = async (req, res) => {
 
         for (const subjectId in subjectsMap) {
             const sub = subjectsMap[subjectId];
+
             const first = sub.terms['First Term'];
             const second = sub.terms['Second Term'];
             const third = sub.terms['Third Term'];
@@ -883,10 +1112,17 @@ exports.getStudentAcademicProfile = async (req, res) => {
 
             if (first && second && third) {
                 cumulativeThird =
-                    first.totalScore + second.totalScore + third.totalScore;
-                annualAverage = Number((cumulativeThird / 3).toFixed(1));
+                    first.totalScore +
+                    second.totalScore +
+                    third.totalScore;
+
+                annualAverage = Number(
+                    (cumulativeThird / 3).toFixed(1)
+                );
             } else if (first && second) {
-                annualAverage = Number((cumulativeSecond / 2).toFixed(1));
+                annualAverage = Number(
+                    (cumulativeSecond / 2).toFixed(1)
+                );
             } else if (first) {
                 annualAverage = first.totalScore;
             }
@@ -894,7 +1130,9 @@ exports.getStudentAcademicProfile = async (req, res) => {
             let displayData = {};
 
             if (term === 'First Term') {
-                displayData = { firstTerm: first };
+                displayData = {
+                    firstTerm: first,
+                };
             } else if (term === 'Second Term') {
                 displayData = {
                     firstTermTotal,
@@ -928,7 +1166,11 @@ exports.getStudentAcademicProfile = async (req, res) => {
             performanceGraph.datasets.push({
                 subject: sub.subjectName,
                 subjectCode: sub.subjectCode,
-                data: [firstTermTotal, secondTermTotal, thirdTermTotal],
+                data: [
+                    firstTermTotal,
+                    secondTermTotal,
+                    thirdTermTotal,
+                ],
             });
 
             reportCardSummary.push({
@@ -940,11 +1182,15 @@ exports.getStudentAcademicProfile = async (req, res) => {
 
         const overallAverage =
             subjectCount > 0
-                ? Number((totalAnnualScore / subjectCount).toFixed(1))
+                ? Number(
+                    (totalAnnualScore / subjectCount).toFixed(1)
+                )
                 : null;
 
         const overallGradeInfo =
-            overallAverage !== null ? getWAECGrade(overallAverage) : null;
+            overallAverage !== null
+                ? getWAECGrade(overallAverage)
+                : null;
 
         const hasAllThreeTerms = rawGrades.some(
             (grade) => grade.term === 'Third Term'
@@ -958,8 +1204,11 @@ exports.getStudentAcademicProfile = async (req, res) => {
 
         if (!classSize) {
             const gradeWithManual = rawGrades.find(
-                (g) => g.manualNoInClass != null && g.manualNoInClass !== ''
+                (grade) =>
+                    grade.manualNoInClass != null &&
+                    grade.manualNoInClass !== ''
             );
+
             if (gradeWithManual) {
                 classSize = Number(gradeWithManual.manualNoInClass);
             }
@@ -985,11 +1234,15 @@ exports.getStudentAcademicProfile = async (req, res) => {
 
         if (!term) {
             response.overallAverage = overallAverage;
-            response.overallGrade = overallGradeInfo?.annualGrade || null;
-            response.overallRemark = overallGradeInfo?.annualRemark || null;
+            response.overallGrade =
+                overallGradeInfo?.annualGrade || null;
+            response.overallRemark =
+                overallGradeInfo?.annualRemark || null;
+
             response.yearTutorComment = hasAllThreeTerms
                 ? getAutomaticYearTutorComment(overallAverage)
                 : null;
+
             response.adminComment = hasAllThreeTerms
                 ? getAutomaticAdminComment(overallAverage)
                 : null;
@@ -998,6 +1251,7 @@ exports.getStudentAcademicProfile = async (req, res) => {
         return res.status(200).json(response);
     } catch (error) {
         console.error('Get Student Academic Profile Error:', error);
+
         return res.status(500).json({
             message: 'Server error',
             error: error.message,
@@ -1033,7 +1287,10 @@ exports.getAllGrades = async (req, res) => {
                 'student',
                 'firstName surname name admissionNumber currentClass department'
             )
-            .populate('subject', 'subjectName subjectCode section')
+            .populate(
+                'subject',
+                'subjectName subjectCode section'
+            )
             .sort({ createdAt: -1 });
 
         return res.status(200).json({
@@ -1042,6 +1299,7 @@ exports.getAllGrades = async (req, res) => {
         });
     } catch (error) {
         console.error('Get All Grades Error:', error);
+
         return res.status(500).json({
             message: 'Server error',
             error: error.message,
@@ -1059,10 +1317,14 @@ exports.getTermStatuses = async (req, res) => {
             req.query.academicYear || (await getCurrentAcademicYear());
 
         if (!academicYear) {
-            return res.status(400).json({ message: 'academicYear is required.' });
+            return res.status(400).json({
+                message: 'academicYear is required.',
+            });
         }
 
-        const statuses = await TermStatus.find({ academicYear }).sort({
+        const statuses = await TermStatus.find({
+            academicYear,
+        }).sort({
             currentTerm: 1,
         });
 
@@ -1072,6 +1334,7 @@ exports.getTermStatuses = async (req, res) => {
         });
     } catch (error) {
         console.error('Get Term Statuses Error:', error);
+
         return res.status(500).json({
             message: 'Failed to retrieve term statuses.',
             error: error.message,

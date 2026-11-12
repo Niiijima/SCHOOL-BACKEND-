@@ -450,3 +450,171 @@ exports.createSubjectBulk = async (req, res) => {
         });
     }
 };
+
+// GET STUDENTS ELIGIBLE FOR A SUBJECT
+exports.getSubjectEligibleStudents = async (req, res) => {
+    try {
+        const { subjectId } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(subjectId)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid subject ID.'
+            });
+        }
+
+        const subject = await Subject.findById(subjectId);
+
+        if (!subject) {
+            return res.status(404).json({
+                success: false,
+                message: 'Subject not found.'
+            });
+        }
+
+        const classFilters = subject.classAssignments.map(
+            (assignment) => {
+                const filter = {
+                    currentClass: assignment.className,
+                    status: 'active'
+                };
+
+                if (requiresDepartment(assignment.className)) {
+                    filter.department = assignment.department;
+                }
+
+                return filter;
+            }
+        );
+
+        const students = await Student.find({
+            $or: classFilters
+        }).select(
+            'firstName surname admissionNumber currentClass department'
+        ).sort({
+            surname: 1,
+            firstName: 1
+        });
+
+        const excludedIds = new Set(
+            (subject.excludedStudents || []).map(
+                (id) => id.toString()
+            )
+        );
+
+        const result = students.map((student) => ({
+            _id: student._id,
+            firstName: student.firstName,
+            surname: student.surname,
+            name: student.name,
+            admissionNumber: student.admissionNumber,
+            currentClass: student.currentClass,
+            department: student.department || null,
+            excluded: excludedIds.has(student._id.toString())
+        }));
+
+        return res.status(200).json({
+            success: true,
+            subjectName: subject.subjectName,
+            subjectCode: subject.subjectCode,
+            count: result.length,
+            students: result
+        });
+
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to retrieve eligible students.',
+            error: error.message
+        });
+    }
+};
+
+
+// EXCLUDE OR RESTORE A STUDENT IN A SUBJECT
+exports.updateStudentSubjectExclusion = async (req, res) => {
+    try {
+        const { subjectId, studentId } = req.params;
+        const { excluded } = req.body;
+
+        if (
+            !mongoose.Types.ObjectId.isValid(subjectId) ||
+            !mongoose.Types.ObjectId.isValid(studentId)
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid subject or student ID.'
+            });
+        }
+
+        if (typeof excluded !== 'boolean') {
+            return res.status(400).json({
+                success: false,
+                message: 'The excluded field must be true or false.'
+            });
+        }
+
+        const subject = await Subject.findById(subjectId);
+
+        if (!subject) {
+            return res.status(404).json({
+                success: false,
+                message: 'Subject not found.'
+            });
+        }
+
+        const student = await Student.findById(studentId);
+
+        if (!student) {
+            return res.status(404).json({
+                success: false,
+                message: 'Student not found.'
+            });
+        }
+
+        if (!isSubjectAssignedToStudent(subject, student)) {
+            // An already-excluded student should still be restorable.
+            const alreadyExcluded = (
+                subject.excludedStudents || []
+            ).some((id) => id.toString() === studentId);
+
+            if (!alreadyExcluded) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'This subject is not assigned to the student’s class and department.'
+                });
+            }
+        }
+
+        const alreadyExcluded = (
+            subject.excludedStudents || []
+        ).some((id) => id.toString() === studentId);
+
+        if (excluded && !alreadyExcluded) {
+            subject.excludedStudents.push(student._id);
+        }
+
+        if (!excluded && alreadyExcluded) {
+            subject.excludedStudents = subject.excludedStudents.filter(
+                (id) => id.toString() !== studentId
+            );
+        }
+
+        await subject.save();
+
+        return res.status(200).json({
+            success: true,
+            message: excluded
+                ? `${student.firstName} ${student.surname} has been excluded from ${subject.subjectName}.`
+                : `${student.firstName} ${student.surname} has been restored to ${subject.subjectName}.`,
+            excluded
+        });
+
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to update student subject assignment.',
+            error: error.message
+        });
+    }
+};
