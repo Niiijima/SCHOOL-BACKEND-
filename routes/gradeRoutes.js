@@ -68,5 +68,34 @@ router.post(
     gradeController.submitMultipleStudentScores
 );
 
+router.patch(
+  '/admin/toggle-lock',
+  restrictTo('admin'),
+  gradeController.toggleTermLock
+);
+
+router.patch(
+  '/admin/publish',
+  restrictTo('admin'),
+  gradeController.publishTermResults
+);
+
+router.get(
+  '/admin/term-statuses',
+  restrictTo('admin'),
+  gradeController.getTermStatuses
+);
+
+router.patch(
+  '/admin/student-result-lock',
+  restrictTo('admin'),
+  gradeController.setStudentResultLock
+);
+
+router.get(
+  '/admin/student-result-locks',
+  restrictTo('admin'),
+  gradeController.getStudentResultLocks
+);
 
 module.exports = router;
