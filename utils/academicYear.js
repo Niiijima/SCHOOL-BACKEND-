@@ -1,3 +1,4 @@
+
 const Settings = require('../models/Settings');
 
 exports.getCurrentAcademicYear = async () => {
@@ -5,7 +6,7 @@ exports.getCurrentAcademicYear = async () => {
 
     if (!settings) {
         settings = await Settings.create({
-            currentAcademicYear: "2025/2026"
+            currentAcademicYear: "2026/2027"
         });
     }
 
@@ -15,6 +16,7 @@ exports.getCurrentAcademicYear = async () => {
 exports.advanceAcademicYear = async (currentYear) => {
     // Example: 2025/2026 -> 2026/2027
     const [start, end] = currentYear.split('/');
+
     const nextYear = `${Number(start) + 1}/${Number(end) + 1}`;
 
     const settings = await Settings.findOneAndUpdate(
