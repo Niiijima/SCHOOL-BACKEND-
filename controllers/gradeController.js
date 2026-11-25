@@ -42,11 +42,14 @@ const normalizeDepartment = (department) => {
 };
 
 const requiresDepartment = (className) => {
-    const normalizedClass = String(className || '').trim().toUpperCase();
+    const normalizedClass = String(className || '')
+        .trim()
+        .toUpperCase();
 
     return ['SS2', 'SS3'].includes(normalizedClass);
 };
 
+// Check whether a student has been individually excluded from a subject.
 const isStudentExcludedFromSubject = (subject, student) => {
     if (!subject || !student?._id) return false;
 
@@ -57,6 +60,8 @@ const isStudentExcludedFromSubject = (subject, student) => {
     );
 };
 
+// Check whether a subject is assigned to a student's class and department.
+// Individual exclusions are also respected.
 const isSubjectAssignedToStudent = (subject, student) => {
     if (!subject || !student || !Array.isArray(subject.classAssignments)) {
         return false;
@@ -79,12 +84,17 @@ const isSubjectAssignedToStudent = (subject, student) => {
             .trim()
             .toUpperCase();
 
-        if (assignedClass !== studentClass) return false;
+        if (assignedClass !== studentClass) {
+            return false;
+        }
 
-        if (!requiresDepartment(studentClass)) return true;
+        if (!requiresDepartment(studentClass)) {
+            return true;
+        }
 
         return (
-            normalizeDepartment(assignment.department) === studentDepartment
+            normalizeDepartment(assignment.department) ===
+            studentDepartment
         );
     });
 };
@@ -200,6 +210,7 @@ exports.getStudentsBySubject = async (req, res) => {
             });
         }
 
+        // Remove individually excluded students from the returned list.
         const excludedIds = new Set(
             (subjectData.excludedStudents || []).map((id) =>
                 id.toString()
@@ -208,11 +219,12 @@ exports.getStudentsBySubject = async (req, res) => {
 
         const availableStudents = (
             subjectData.enrolledStudents || []
-        ).filter(
-            (student) =>
+        ).filter((student) => {
+            return (
                 student &&
                 !excludedIds.has(student._id.toString())
-        );
+            );
+        });
 
         return res.status(200).json({
             subjectName: subjectData.subjectName,
@@ -258,6 +270,7 @@ exports.submitStudentScores = async (req, res) => {
             academicYear = await getCurrentAcademicYear();
         }
 
+        // Find student using admission number if no student ID is supplied.
         if (!student && admissionNumber) {
             const studentDoc = await Student.findOne({ admissionNumber });
 
@@ -270,6 +283,7 @@ exports.submitStudentScores = async (req, res) => {
             student = studentDoc._id;
         }
 
+        // Find student using name if no student ID is supplied.
         if (!student && studentName) {
             const studentDoc = await Student.findOne({
                 $or: [
@@ -288,6 +302,7 @@ exports.submitStudentScores = async (req, res) => {
             student = studentDoc._id;
         }
 
+        // Find subject using subject code if no subject ID is supplied.
         if (!subject && subjectCode) {
             const subjectDoc = await Subject.findOne({
                 subjectCode: String(subjectCode).toUpperCase(),
@@ -302,6 +317,7 @@ exports.submitStudentScores = async (req, res) => {
             subject = subjectDoc._id;
         }
 
+        // Find subject using subject name if no subject ID is supplied.
         if (!subject && subjectName) {
             const subjectDoc = await Subject.findOne({
                 subjectName: { $regex: subjectName, $options: 'i' },
@@ -322,12 +338,16 @@ exports.submitStudentScores = async (req, res) => {
             });
         }
 
-        if (
-            !mongoose.Types.ObjectId.isValid(student) ||
-            !mongoose.Types.ObjectId.isValid(subject)
-        ) {
+        if (!mongoose.Types.ObjectId.isValid(student) ||
+            !mongoose.Types.ObjectId.isValid(subject)) {
             return res.status(400).json({
                 message: 'Invalid student or subject ID.',
+            });
+        }
+
+        if (!term) {
+            return res.status(400).json({
+                message: 'term is required.',
             });
         }
 
@@ -341,11 +361,15 @@ exports.submitStudentScores = async (req, res) => {
         const subjectDetails = await Subject.findById(subject);
 
         if (!studentDetails) {
-            return res.status(404).json({ message: 'Student not found.' });
+            return res.status(404).json({
+                message: 'Student not found.',
+            });
         }
 
         if (!subjectDetails) {
-            return res.status(404).json({ message: 'Subject not found.' });
+            return res.status(404).json({
+                message: 'Subject not found.',
+            });
         }
 
         const studentSection = getStudentSection(studentDetails);
@@ -356,13 +380,15 @@ exports.submitStudentScores = async (req, res) => {
             });
         }
 
+        // Explicitly reject students excluded from this subject.
         if (isStudentExcludedFromSubject(subjectDetails, studentDetails)) {
             return res.status(403).json({
-                message: 'This student is excluded from this subject.',
+                message: `${studentDetails.firstName} ${studentDetails.surname} is excluded from ${subjectDetails.subjectName}. Score submission is not allowed.`,
                 excluded: true,
             });
         }
 
+        // Confirm that the subject is assigned to the student's class/department.
         if (!isSubjectAssignedToStudent(subjectDetails, studentDetails)) {
             return res.status(403).json({
                 message: `${subjectDetails.subjectName} is not assigned to this student's class or department.`,
@@ -380,14 +406,23 @@ exports.submitStudentScores = async (req, res) => {
             });
         }
 
-        // This route preserves the old score format.
-        const oldFields = {
-            test1: validateScore(test1, 10),
-            test2: validateScore(test2, 10),
-            test3: validateScore(test3, 10),
-            assignment: validateScore(assignment, 10),
-            exam: validateScore(exam, 60),
-        };
+        const scoreValues = [
+            test1,
+            test2,
+            test3,
+            assignment,
+            exam,
+        ];
+
+        const hasInvalidScore = scoreValues.some((score) => {
+            if (score === undefined || score === null || score === '') {
+                return false;
+            }
+
+            const value = Number(score);
+
+            return !Number.isFinite(value) || value < 0;
+        });
 
         for (const [field, value] of Object.entries(oldFields)) {
             if (value === false) {
@@ -457,7 +492,7 @@ exports.submitStudentScores = async (req, res) => {
                 },
             },
             {
-                returnDocument: 'after',
+                new: true,
                 upsert: true,
                 runValidators: true,
             }
@@ -512,7 +547,7 @@ const submitScoreComponent = async (req, res, componentType) => {
             });
         }
 
-        const year = academicYear || await getCurrentAcademicYear();
+        const year = academicYear || (await getCurrentAcademicYear());
 
         const student = await Student.findById(studentId);
 
@@ -555,7 +590,8 @@ const submitScoreComponent = async (req, res, componentType) => {
 
         if (new Set(subjectIds.map(String)).size !== subjectIds.length) {
             return res.status(400).json({
-                message: 'A subject cannot appear more than once in a submission.',
+                message:
+                    'A subject cannot appear more than once in the same submission.',
             });
         }
 
@@ -593,9 +629,10 @@ const submitScoreComponent = async (req, res, componentType) => {
         for (const item of scores) {
             const subject = subjectMap.get(String(item.subject));
 
+            // Reject individually excluded students.
             if (isStudentExcludedFromSubject(subject, student)) {
                 return res.status(403).json({
-                    message: `This student is excluded from ${subject.subjectName}.`,
+                    message: `This student is excluded from ${subject.subjectName}. Score submission is not allowed.`,
                     excluded: true,
                 });
             }
@@ -606,28 +643,39 @@ const submitScoreComponent = async (req, res, componentType) => {
                 });
             }
 
-            const updates = {};
+            const fields = [
+                'test1',
+                'test2',
+                'test3',
+                'assignment',
+                'exam',
+            ];
+
+            const values = {};
 
             for (const field of fields) {
-                const rawValue = item[field];
+                const value = item[field];
 
-                // Blank fields are ignored, not saved as zero.
-                if (!hasScore(rawValue)) continue;
-
-                const value = validateScore(rawValue, limits[field]);
-
-                if (value === false) {
+                if (
+                    value === undefined ||
+                    value === null ||
+                    value === '' ||
+                    !Number.isFinite(Number(value)) ||
+                    Number(value) < 0
+                ) {
                     return res.status(400).json({
                         message: `${field} for ${subject.subjectName} must be between 0 and ${limits[field]}.`,
                     });
                 }
 
-                updates[field] = value;
+                values[field] = Number(value);
             }
 
-            // Do not create an empty Grade record for a subject
-            // if every field in this submission is blank.
-            if (Object.keys(updates).length === 0) continue;
+            const totalCA =
+                values.test1 +
+                values.test2 +
+                values.test3 +
+                values.assignment;
 
             const existing = await Grade.findOne({
                 student: student._id,
@@ -683,20 +731,9 @@ const submitScoreComponent = async (req, res, componentType) => {
             savedGrades.push(saved);
         }
 
-        return res.status(200).json({
-            message: `${componentType} scores saved successfully.`,
-            student: {
-                id: student._id,
-                name:
-                    student.name ||
-                    `${student.firstName || ''} ${student.surname || ''}`.trim(),
-                admissionNumber: student.admissionNumber,
-            },
-            count: savedGrades.length,
-            results: savedGrades,
+        await Grade.bulkWrite(operations, {
+            ordered: true,
         });
-    } catch (error) {
-        console.error(`Submit ${componentType} Scores Error:`, error);
 
         return res.status(500).json({
             message: `Failed to save ${componentType} scores.`,
@@ -946,7 +983,8 @@ exports.publishTermResults = async (req, res) => {
             typeof isPublished !== 'boolean'
         ) {
             return res.status(400).json({
-                message: 'academicYear, currentTerm and isPublished are required.',
+                message:
+                    'academicYear, currentTerm and isPublished are required.',
             });
         }
 
@@ -1001,7 +1039,7 @@ exports.publishTermResults = async (req, res) => {
 };
 
 // ======================================================
-// TOGGLE TERM LOCK — GLOBAL
+// TOGGLE TERM LOCK (GLOBAL — BLOCKS SCORE ENTRY)
 // ======================================================
 
 exports.toggleTermLock = async (req, res) => {
@@ -1038,7 +1076,7 @@ exports.toggleTermLock = async (req, res) => {
                 },
             },
             {
-                returnDocument: 'after',
+                new: true,
                 upsert: true,
                 runValidators: true,
             }
@@ -1090,7 +1128,8 @@ exports.setStudentResultLock = async (req, res) => {
             typeof isLocked !== 'boolean'
         ) {
             return res.status(400).json({
-                message: 'studentId, academicYear, term and isLocked are required.',
+                message:
+                    'studentId, academicYear, term and isLocked are required.',
             });
         }
 
@@ -1118,7 +1157,7 @@ exports.setStudentResultLock = async (req, res) => {
                 },
             },
             {
-                returnDocument: 'after',
+                new: true,
                 upsert: true,
                 runValidators: true,
             }
@@ -1233,7 +1272,7 @@ exports.getStudentAcademicProfile = async (req, res) => {
             });
         }
 
-        // Students only see published terms.
+        // 1. Students only see published terms.
         if (isStudent) {
             const publishedStatuses = await TermStatus.find({
                 academicYear,
@@ -1254,7 +1293,7 @@ exports.getStudentAcademicProfile = async (req, res) => {
                 });
             }
 
-            // Individual student result locks.
+            // 2. Individual student result locks.
             const lockFilter = {
                 student: studentId,
                 academicYear,
@@ -1402,19 +1441,19 @@ exports.getStudentAcademicProfile = async (req, res) => {
                 thirdTermTotal !== null
             ) {
                 cumulativeThird =
-                    firstTermTotal +
-                    secondTermTotal +
-                    thirdTermTotal;
+                    first.totalScore +
+                    second.totalScore +
+                    third.totalScore;
 
                 annualAverage = Number(
                     (cumulativeThird / 3).toFixed(1)
                 );
-            } else if (cumulativeSecond !== null) {
+            } else if (first && second) {
                 annualAverage = Number(
                     (cumulativeSecond / 2).toFixed(1)
                 );
-            } else if (firstTermTotal !== null) {
-                annualAverage = firstTermTotal;
+            } else if (first) {
+                annualAverage = first.totalScore;
             }
 
             let displayData = {};
