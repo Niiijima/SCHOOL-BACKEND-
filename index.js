@@ -31,6 +31,8 @@ const app = express();
 app.use(cors({
   origin: [
     'https://school-s-frontend.vercel.app',
+    'https://olaktriumphschool.com.ng',
+    'https://www.olaktriumphschool.com.ng',
     'http://localhost:5173',
     'http://localhost:3000',
     'http://127.0.0.1:5173'
