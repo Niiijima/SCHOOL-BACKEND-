@@ -1,5 +1,6 @@
 
 const mongoose = require('mongoose');
+
 const Grade = require('../models/Grade');
 const Subject = require('../models/Subject');
 const TermStatus = require('../models/TermStatus');
@@ -41,14 +42,11 @@ const normalizeDepartment = (department) => {
 };
 
 const requiresDepartment = (className) => {
-    const normalizedClass = String(className || '')
-        .trim()
-        .toUpperCase();
+    const normalizedClass = String(className || '').trim().toUpperCase();
 
     return ['SS2', 'SS3'].includes(normalizedClass);
 };
 
-// Check whether a student has been individually excluded from a subject.
 const isStudentExcludedFromSubject = (subject, student) => {
     if (!subject || !student?._id) return false;
 
@@ -59,8 +57,6 @@ const isStudentExcludedFromSubject = (subject, student) => {
     );
 };
 
-// Check whether a subject is assigned to a student's class and department.
-// Individual exclusions are also respected.
 const isSubjectAssignedToStudent = (subject, student) => {
     if (!subject || !student || !Array.isArray(subject.classAssignments)) {
         return false;
@@ -83,17 +79,12 @@ const isSubjectAssignedToStudent = (subject, student) => {
             .trim()
             .toUpperCase();
 
-        if (assignedClass !== studentClass) {
-            return false;
-        }
+        if (assignedClass !== studentClass) return false;
 
-        if (!requiresDepartment(studentClass)) {
-            return true;
-        }
+        if (!requiresDepartment(studentClass)) return true;
 
         return (
-            normalizeDepartment(assignment.department) ===
-            studentDepartment
+            normalizeDepartment(assignment.department) === studentDepartment
         );
     });
 };
@@ -125,6 +116,65 @@ const getClassSize = async (student) => {
     return Student.countDocuments(query);
 };
 
+// Check whether a score is actually present.
+// Zero is a valid submitted score.
+const hasScore = (value) =>
+    value !== undefined && value !== null && value !== '';
+
+const validateScore = (value, maximum) => {
+    if (!hasScore(value)) return null;
+
+    const number = Number(value);
+
+    if (
+        !Number.isFinite(number) ||
+        number < 0 ||
+        number > maximum
+    ) {
+        return false;
+    }
+
+    return number;
+};
+
+// Calculate a result only when all CA components and the exam exist.
+const calculateCompletedResult = (studentSection, values) => {
+    const caFields = ['test1', 'test2', 'notes', 'oral'];
+
+    const caComplete = caFields.every((field) =>
+        hasScore(values[field])
+    );
+
+    const examComplete = hasScore(values.exam);
+
+    if (!caComplete || !examComplete) {
+        return {
+            caSubmitted: caComplete,
+            examSubmitted: examComplete,
+            totalScore: null,
+            grade: null,
+            remark: null,
+        };
+    }
+
+    const result = calculateGrade(
+        studentSection,
+        Number(values.test1),
+        Number(values.test2),
+        Number(values.notes),
+        Number(values.oral),
+        Number(values.exam)
+    );
+
+    return {
+        caSubmitted: true,
+        examSubmitted: true,
+        totalScore: result.totalScore,
+        grade: result.grade,
+        remark: result.remark,
+    };
+};
+
 // ======================================================
 // GET STUDENTS BY SUBJECT
 // ======================================================
@@ -150,7 +200,6 @@ exports.getStudentsBySubject = async (req, res) => {
             });
         }
 
-        // Remove individually excluded students from the returned list.
         const excludedIds = new Set(
             (subjectData.excludedStudents || []).map((id) =>
                 id.toString()
@@ -159,12 +208,11 @@ exports.getStudentsBySubject = async (req, res) => {
 
         const availableStudents = (
             subjectData.enrolledStudents || []
-        ).filter((student) => {
-            return (
+        ).filter(
+            (student) =>
                 student &&
                 !excludedIds.has(student._id.toString())
-            );
-        });
+        );
 
         return res.status(200).json({
             subjectName: subjectData.subjectName,
@@ -184,7 +232,7 @@ exports.getStudentsBySubject = async (req, res) => {
 };
 
 // ======================================================
-// SUBMIT STUDENT SCORES
+// SUBMIT INDIVIDUAL STUDENT SCORES — LEGACY ROUTE
 // ======================================================
 
 exports.submitStudentScores = async (req, res) => {
@@ -210,7 +258,6 @@ exports.submitStudentScores = async (req, res) => {
             academicYear = await getCurrentAcademicYear();
         }
 
-        // Find student using admission number if no student ID is supplied.
         if (!student && admissionNumber) {
             const studentDoc = await Student.findOne({ admissionNumber });
 
@@ -223,7 +270,6 @@ exports.submitStudentScores = async (req, res) => {
             student = studentDoc._id;
         }
 
-        // Find student using name if no student ID is supplied.
         if (!student && studentName) {
             const studentDoc = await Student.findOne({
                 $or: [
@@ -242,7 +288,6 @@ exports.submitStudentScores = async (req, res) => {
             student = studentDoc._id;
         }
 
-        // Find subject using subject code if no subject ID is supplied.
         if (!subject && subjectCode) {
             const subjectDoc = await Subject.findOne({
                 subjectCode: String(subjectCode).toUpperCase(),
@@ -257,7 +302,6 @@ exports.submitStudentScores = async (req, res) => {
             subject = subjectDoc._id;
         }
 
-        // Find subject using subject name if no subject ID is supplied.
         if (!subject && subjectName) {
             const subjectDoc = await Subject.findOne({
                 subjectName: { $regex: subjectName, $options: 'i' },
@@ -274,21 +318,16 @@ exports.submitStudentScores = async (req, res) => {
 
         if (!student || !subject) {
             return res.status(400).json({
-                message:
-                    'Please provide student and subject using IDs, names, or admissionNumber and subjectCode.',
+                message: 'Please provide a student and subject.',
             });
         }
 
-        if (!mongoose.Types.ObjectId.isValid(student) ||
-            !mongoose.Types.ObjectId.isValid(subject)) {
+        if (
+            !mongoose.Types.ObjectId.isValid(student) ||
+            !mongoose.Types.ObjectId.isValid(subject)
+        ) {
             return res.status(400).json({
                 message: 'Invalid student or subject ID.',
-            });
-        }
-
-        if (!term) {
-            return res.status(400).json({
-                message: 'term is required.',
             });
         }
 
@@ -302,15 +341,11 @@ exports.submitStudentScores = async (req, res) => {
         const subjectDetails = await Subject.findById(subject);
 
         if (!studentDetails) {
-            return res.status(404).json({
-                message: 'Student not found.',
-            });
+            return res.status(404).json({ message: 'Student not found.' });
         }
 
         if (!subjectDetails) {
-            return res.status(404).json({
-                message: 'Subject not found.',
-            });
+            return res.status(404).json({ message: 'Subject not found.' });
         }
 
         const studentSection = getStudentSection(studentDetails);
@@ -321,23 +356,16 @@ exports.submitStudentScores = async (req, res) => {
             });
         }
 
-        // Explicitly reject students excluded from this subject.
         if (isStudentExcludedFromSubject(subjectDetails, studentDetails)) {
             return res.status(403).json({
-                message: `${studentDetails.firstName} ${studentDetails.surname} is excluded from ${subjectDetails.subjectName}. Score submission is not allowed.`,
+                message: 'This student is excluded from this subject.',
                 excluded: true,
             });
         }
 
-        // Confirm that the subject is assigned to the student's class/department.
         if (!isSubjectAssignedToStudent(subjectDetails, studentDetails)) {
             return res.status(403).json({
-                message: `${subjectDetails.subjectName} is not assigned to ${studentDetails.currentClass}${
-                    requiresDepartment(studentDetails.currentClass) &&
-                    studentDetails.department
-                        ? ` (${studentDetails.department})`
-                        : ''
-                }.`,
+                message: `${subjectDetails.subjectName} is not assigned to this student's class or department.`,
             });
         }
 
@@ -352,78 +380,84 @@ exports.submitStudentScores = async (req, res) => {
             });
         }
 
-        const scoreValues = [
-            test1,
-            test2,
-            test3,
-            assignment,
-            exam,
-        ];
+        // This route preserves the old score format.
+        const oldFields = {
+            test1: validateScore(test1, 10),
+            test2: validateScore(test2, 10),
+            test3: validateScore(test3, 10),
+            assignment: validateScore(assignment, 10),
+            exam: validateScore(exam, 60),
+        };
 
-        const hasInvalidScore = scoreValues.some((score) => {
-            if (score === undefined || score === null || score === '') {
-                return false;
+        for (const [field, value] of Object.entries(oldFields)) {
+            if (value === false) {
+                return res.status(400).json({
+                    message: `Invalid ${field} score.`,
+                });
             }
+        }
 
-            const value = Number(score);
-
-            return !Number.isFinite(value) || value < 0;
+        const existing = await Grade.findOne({
+            student,
+            subject,
+            term,
+            academicYear,
         });
 
-        if (hasInvalidScore) {
-            return res.status(400).json({
-                message: 'Scores must be valid non-negative numbers.',
-            });
+        const updates = {};
+
+        for (const field of Object.keys(oldFields)) {
+            if (hasScore(req.body[field])) {
+                updates[field] = oldFields[field];
+            }
         }
 
-        const totalCA =
-            (Number(test1) || 0) +
-            (Number(test2) || 0) +
-            (Number(test3) || 0) +
-            (Number(assignment) || 0);
+        const merged = {
+            test1: existing?.test1 ?? null,
+            test2: existing?.test2 ?? null,
+            notes: existing?.notes ?? null,
+            oral: existing?.oral ?? null,
+            exam: existing?.exam ?? null,
+            ...updates,
+        };
 
-        if (totalCA > 40) {
-            return res.status(400).json({
-                message: `Cumulative CA (${totalCA}) cannot exceed 40.`,
-            });
-        }
+        // Legacy CA data is retained and is not silently converted
+        // into the new CA structure.
+        const newStructureComplete =
+            ['test1', 'test2', 'notes', 'oral'].every((field) =>
+                hasScore(merged[field])
+            ) && hasScore(merged.exam);
 
-        if ((Number(exam) || 0) > 60) {
-            return res.status(400).json({
-                message: `Exam score (${exam}) cannot exceed 60.`,
-            });
-        }
-
-        const { totalScore, grade, remark } = calculateGrade(
-            studentSection,
-            test1,
-            test2,
-            test3,
-            assignment,
-            exam
-        );
+        const calculated = newStructureComplete
+            ? calculateCompletedResult(studentSection, merged)
+            : {
+                caSubmitted: false,
+                examSubmitted: hasScore(merged.exam),
+                totalScore: null,
+                grade: null,
+                remark: null,
+            };
 
         const savedGrade = await Grade.findOneAndUpdate(
             { student, subject, term, academicYear },
             {
-                test1,
-                test2,
-                test3,
-                assignment,
-                exam,
-                totalScore,
-                grade,
-                remark,
-                manualNoInClass:
-                    noInClass !== undefined &&
-                    noInClass !== null &&
-                    noInClass !== ''
+                $set: {
+                    ...updates,
+                    ...calculated,
+                    manualNoInClass: hasScore(noInClass)
                         ? Number(noInClass)
-                        : null,
-                gradedBy: req.user?.id,
+                        : existing?.manualNoInClass ?? null,
+                    gradedBy: req.user?.id,
+                },
+                $setOnInsert: {
+                    student,
+                    subject,
+                    term,
+                    academicYear,
+                },
             },
             {
-                new: true,
+                returnDocument: 'after',
                 upsert: true,
                 runValidators: true,
             }
@@ -444,10 +478,10 @@ exports.submitStudentScores = async (req, res) => {
 };
 
 // ======================================================
-// SUBMIT MULTIPLE SUBJECT SCORES FOR ONE STUDENT
+// SUBMIT CA OR EXAM SCORES — NEW ROUTES
 // ======================================================
 
-exports.submitMultipleStudentScores = async (req, res) => {
+const submitScoreComponent = async (req, res, componentType) => {
     try {
         const {
             student: studentId,
@@ -457,7 +491,10 @@ exports.submitMultipleStudentScores = async (req, res) => {
             scores,
         } = req.body;
 
-        if (!studentId || !mongoose.Types.ObjectId.isValid(studentId)) {
+        if (
+            !studentId ||
+            !mongoose.Types.ObjectId.isValid(studentId)
+        ) {
             return res.status(400).json({
                 message: 'A valid student ID is required.',
             });
@@ -475,7 +512,7 @@ exports.submitMultipleStudentScores = async (req, res) => {
             });
         }
 
-        const year = academicYear || (await getCurrentAcademicYear());
+        const year = academicYear || await getCurrentAcademicYear();
 
         const student = await Student.findById(studentId);
 
@@ -518,8 +555,242 @@ exports.submitMultipleStudentScores = async (req, res) => {
 
         if (new Set(subjectIds.map(String)).size !== subjectIds.length) {
             return res.status(400).json({
-                message:
-                    'A subject cannot appear more than once in the same submission.',
+                message: 'A subject cannot appear more than once in a submission.',
+            });
+        }
+
+        const subjects = await Subject.find({
+            _id: { $in: subjectIds },
+        });
+
+        const subjectMap = new Map(
+            subjects.map((subject) => [
+                subject._id.toString(),
+                subject,
+            ])
+        );
+
+        if (subjects.length !== subjectIds.length) {
+            return res.status(404).json({
+                message: 'One or more subjects could not be found.',
+            });
+        }
+
+        const fields = componentType === 'CA'
+            ? ['test1', 'test2', 'notes', 'oral']
+            : ['exam'];
+
+        const limits = {
+            test1: 10,
+            test2: 20,
+            notes: 5,
+            oral: 5,
+            exam: 60,
+        };
+
+        const savedGrades = [];
+
+        for (const item of scores) {
+            const subject = subjectMap.get(String(item.subject));
+
+            if (isStudentExcludedFromSubject(subject, student)) {
+                return res.status(403).json({
+                    message: `This student is excluded from ${subject.subjectName}.`,
+                    excluded: true,
+                });
+            }
+
+            if (!isSubjectAssignedToStudent(subject, student)) {
+                return res.status(403).json({
+                    message: `${subject.subjectName} is not assigned to this student's class or department.`,
+                });
+            }
+
+            const updates = {};
+
+            for (const field of fields) {
+                const rawValue = item[field];
+
+                // Blank fields are ignored, not saved as zero.
+                if (!hasScore(rawValue)) continue;
+
+                const value = validateScore(rawValue, limits[field]);
+
+                if (value === false) {
+                    return res.status(400).json({
+                        message: `${field} for ${subject.subjectName} must be between 0 and ${limits[field]}.`,
+                    });
+                }
+
+                updates[field] = value;
+            }
+
+            // Do not create an empty Grade record for a subject
+            // if every field in this submission is blank.
+            if (Object.keys(updates).length === 0) continue;
+
+            const existing = await Grade.findOne({
+                student: student._id,
+                subject: subject._id,
+                term,
+                academicYear: year,
+            });
+
+            const merged = {
+                test1: existing?.test1 ?? null,
+                test2: existing?.test2 ?? null,
+                notes: existing?.notes ?? null,
+                oral: existing?.oral ?? null,
+                exam: existing?.exam ?? null,
+                ...updates,
+            };
+
+            const calculated = calculateCompletedResult(
+                studentSection,
+                merged
+            );
+
+            const saved = await Grade.findOneAndUpdate(
+                {
+                    student: student._id,
+                    subject: subject._id,
+                    term,
+                    academicYear: year,
+                },
+                {
+                    $set: {
+                        ...updates,
+                        ...calculated,
+                        manualNoInClass: hasScore(noInClass)
+                            ? Number(noInClass)
+                            : existing?.manualNoInClass ?? null,
+                        gradedBy: req.user?.id,
+                    },
+                    $setOnInsert: {
+                        student: student._id,
+                        subject: subject._id,
+                        term,
+                        academicYear: year,
+                    },
+                },
+                {
+                    returnDocument: 'after',
+                    upsert: true,
+                    runValidators: true,
+                }
+            ).populate('subject', 'subjectName subjectCode');
+
+            savedGrades.push(saved);
+        }
+
+        return res.status(200).json({
+            message: `${componentType} scores saved successfully.`,
+            student: {
+                id: student._id,
+                name:
+                    student.name ||
+                    `${student.firstName || ''} ${student.surname || ''}`.trim(),
+                admissionNumber: student.admissionNumber,
+            },
+            count: savedGrades.length,
+            results: savedGrades,
+        });
+    } catch (error) {
+        console.error(`Submit ${componentType} Scores Error:`, error);
+
+        return res.status(500).json({
+            message: `Failed to save ${componentType} scores.`,
+            error: error.message,
+        });
+    }
+};
+
+exports.submitCAScores = (req, res) =>
+    submitScoreComponent(req, res, 'CA');
+
+exports.submitExamScores = (req, res) =>
+    submitScoreComponent(req, res, 'Exam');
+
+// ======================================================
+// SUBMIT MULTIPLE SUBJECT SCORES — LEGACY ROUTE
+// Kept available for existing frontend integrations.
+// ======================================================
+
+exports.submitMultipleStudentScores = async (req, res) => {
+    try {
+        const {
+            student: studentId,
+            term,
+            academicYear,
+            noInClass,
+            scores,
+        } = req.body;
+
+        if (
+            !studentId ||
+            !mongoose.Types.ObjectId.isValid(studentId)
+        ) {
+            return res.status(400).json({
+                message: 'A valid student ID is required.',
+            });
+        }
+
+        if (!['First Term', 'Second Term', 'Third Term'].includes(term)) {
+            return res.status(400).json({
+                message: 'A valid academic term is required.',
+            });
+        }
+
+        if (!Array.isArray(scores) || scores.length === 0) {
+            return res.status(400).json({
+                message: 'Please provide at least one subject score.',
+            });
+        }
+
+        const year = academicYear || await getCurrentAcademicYear();
+
+        const student = await Student.findById(studentId);
+
+        if (!student) {
+            return res.status(404).json({
+                message: 'Student not found.',
+            });
+        }
+
+        const studentSection = getStudentSection(student);
+
+        if (!studentSection) {
+            return res.status(400).json({
+                message: 'The student does not have a valid current class.',
+            });
+        }
+
+        const termConfig = await TermStatus.findOne({
+            academicYear: year,
+            currentTerm: term,
+        });
+
+        if (termConfig?.isLocked) {
+            return res.status(403).json({
+                message: 'Access Denied: Results for this term are locked.',
+            });
+        }
+
+        const subjectIds = scores.map((item) => item.subject);
+
+        if (
+            subjectIds.some(
+                (id) => !id || !mongoose.Types.ObjectId.isValid(id)
+            )
+        ) {
+            return res.status(400).json({
+                message: 'One or more subject IDs are invalid.',
+            });
+        }
+
+        if (new Set(subjectIds.map(String)).size !== subjectIds.length) {
+            return res.status(400).json({
+                message: 'A subject cannot appear more than once in a submission.',
             });
         }
 
@@ -540,15 +811,14 @@ exports.submitMultipleStudentScores = async (req, res) => {
             });
         }
 
-        const operations = [];
+        const savedGrades = [];
 
         for (const item of scores) {
             const subject = subjectMap.get(String(item.subject));
 
-            // Reject individually excluded students.
             if (isStudentExcludedFromSubject(subject, student)) {
                 return res.status(403).json({
-                    message: `This student is excluded from ${subject.subjectName}. Score submission is not allowed.`,
+                    message: `This student is excluded from ${subject.subjectName}.`,
                     excluded: true,
                 });
             }
@@ -559,101 +829,89 @@ exports.submitMultipleStudentScores = async (req, res) => {
                 });
             }
 
-            const fields = [
-                'test1',
-                'test2',
-                'test3',
-                'assignment',
-                'exam',
-            ];
+            const existing = await Grade.findOne({
+                student: student._id,
+                subject: subject._id,
+                term,
+                academicYear: year,
+            });
 
-            const values = {};
+            const updates = {};
 
-            for (const field of fields) {
-                const value = item[field];
+            // Accept both the new CA fields and legacy fields.
+            const limits = {
+                test1: 10,
+                test2: 20,
+                notes: 5,
+                oral: 5,
+                exam: 60,
+            };
 
-                if (
-                    value === undefined ||
-                    value === null ||
-                    value === '' ||
-                    !Number.isFinite(Number(value)) ||
-                    Number(value) < 0
-                ) {
+            for (const field of Object.keys(limits)) {
+                if (!hasScore(item[field])) continue;
+
+                const value = validateScore(item[field], limits[field]);
+
+                if (value === false) {
                     return res.status(400).json({
-                        message: `Please provide a valid ${field} score for ${subject.subjectName}.`,
+                        message: `Invalid ${field} score for ${subject.subjectName}.`,
                     });
                 }
 
-                values[field] = Number(value);
+                updates[field] = value;
             }
 
-            const totalCA =
-                values.test1 +
-                values.test2 +
-                values.test3 +
-                values.assignment;
+            if (Object.keys(updates).length === 0) continue;
 
-            if (totalCA > 40) {
-                return res.status(400).json({
-                    message: `CA scores for ${subject.subjectName} cannot exceed 40.`,
-                });
-            }
+            const merged = {
+                test1: existing?.test1 ?? null,
+                test2: existing?.test2 ?? null,
+                notes: existing?.notes ?? null,
+                oral: existing?.oral ?? null,
+                exam: existing?.exam ?? null,
+                ...updates,
+            };
 
-            if (values.exam > 60) {
-                return res.status(400).json({
-                    message: `Exam score for ${subject.subjectName} cannot exceed 60.`,
-                });
-            }
-
-            const { totalScore, grade, remark } = calculateGrade(
+            const calculated = calculateCompletedResult(
                 studentSection,
-                values.test1,
-                values.test2,
-                values.test3,
-                values.assignment,
-                values.exam
+                merged
             );
 
-            operations.push({
-                updateOne: {
-                    filter: {
+            const saved = await Grade.findOneAndUpdate(
+                {
+                    student: student._id,
+                    subject: subject._id,
+                    term,
+                    academicYear: year,
+                },
+                {
+                    $set: {
+                        ...updates,
+                        ...calculated,
+                        manualNoInClass: hasScore(noInClass)
+                            ? Number(noInClass)
+                            : existing?.manualNoInClass ?? null,
+                        gradedBy: req.user?.id,
+                    },
+                    $setOnInsert: {
                         student: student._id,
                         subject: subject._id,
                         term,
                         academicYear: year,
                     },
-                    update: {
-                        $set: {
-                            ...values,
-                            totalScore,
-                            grade,
-                            remark,
-                            manualNoInClass:
-                                noInClass !== undefined &&
-                                noInClass !== null &&
-                                noInClass !== ''
-                                    ? Number(noInClass)
-                                    : null,
-                        },
-                    },
-                    upsert: true,
                 },
-            });
+                {
+                    returnDocument: 'after',
+                    upsert: true,
+                    runValidators: true,
+                }
+            ).populate('subject', 'subjectName subjectCode');
+
+            savedGrades.push(saved);
         }
 
-        await Grade.bulkWrite(operations, {
-            ordered: true,
-        });
-
-        const savedGrades = await Grade.find({
-            student: student._id,
-            subject: { $in: subjectIds },
-            term,
-            academicYear: year,
-        }).populate('subject', 'subjectName subjectCode');
-
         return res.status(200).json({
-            message: 'All student subject scores submitted successfully!',
+            message: 'Student subject scores saved successfully.',
             student: {
                 id: student._id,
                 name:
@@ -688,8 +946,7 @@ exports.publishTermResults = async (req, res) => {
             typeof isPublished !== 'boolean'
         ) {
             return res.status(400).json({
-                message:
-                    'academicYear, currentTerm and isPublished are required.',
+                message: 'academicYear, currentTerm and isPublished are required.',
             });
         }
 
@@ -720,7 +977,7 @@ exports.publishTermResults = async (req, res) => {
                 },
             },
             {
-                new: true,
+                returnDocument: 'after',
                 upsert: true,
                 runValidators: true,
                 setDefaultsOnInsert: true,
@@ -744,7 +1001,7 @@ exports.publishTermResults = async (req, res) => {
 };
 
 // ======================================================
-// TOGGLE TERM LOCK (GLOBAL — BLOCKS SCORE ENTRY)
+// TOGGLE TERM LOCK — GLOBAL
 // ======================================================
 
 exports.toggleTermLock = async (req, res) => {
@@ -781,7 +1038,7 @@ exports.toggleTermLock = async (req, res) => {
                 },
             },
             {
-                new: true,
+                returnDocument: 'after',
                 upsert: true,
                 runValidators: true,
             }
@@ -833,8 +1090,7 @@ exports.setStudentResultLock = async (req, res) => {
             typeof isLocked !== 'boolean'
         ) {
             return res.status(400).json({
-                message:
-                    'studentId, academicYear, term and isLocked are required.',
+                message: 'studentId, academicYear, term and isLocked are required.',
             });
         }
 
@@ -862,7 +1118,7 @@ exports.setStudentResultLock = async (req, res) => {
                 },
             },
             {
-                new: true,
+                returnDocument: 'after',
                 upsert: true,
                 runValidators: true,
             }
@@ -947,7 +1203,7 @@ exports.getStudentAcademicProfile = async (req, res) => {
         }
 
         const academicYear =
-            req.query.academicYear || (await getCurrentAcademicYear());
+            req.query.academicYear || await getCurrentAcademicYear();
 
         if (!academicYear) {
             return res.status(400).json({
@@ -977,7 +1233,7 @@ exports.getStudentAcademicProfile = async (req, res) => {
             });
         }
 
-        // 1. Students only see published terms.
+        // Students only see published terms.
         if (isStudent) {
             const publishedStatuses = await TermStatus.find({
                 academicYear,
@@ -994,29 +1250,25 @@ exports.getStudentAcademicProfile = async (req, res) => {
 
             if (!rawGrades.length) {
                 return res.status(403).json({
-                    message:
-                        'Your results for this academic year have not been published yet.',
+                    message: 'Your results for this academic year have not been published yet.',
                 });
             }
 
-            // 2. Individual student result locks.
+            // Individual student result locks.
             const lockFilter = {
                 student: studentId,
                 academicYear,
                 isLocked: true,
             };
 
-            if (term) {
-                lockFilter.term = term;
-            }
+            if (term) lockFilter.term = term;
 
             const locks = await ResultLock.find(lockFilter).select('term');
 
             if (term) {
                 if (locks.length > 0) {
                     return res.status(403).json({
-                        message:
-                            'Your result for this term has been locked by the school administration. Please contact the office.',
+                        message: 'Your result for this term has been locked by the school administration. Please contact the office.',
                         locked: true,
                         term,
                         academicYear,
@@ -1035,8 +1287,7 @@ exports.getStudentAcademicProfile = async (req, res) => {
 
                 if (!rawGrades.length) {
                     return res.status(403).json({
-                        message:
-                            'Your results have been locked by the school administration. Please contact the office.',
+                        message: 'Your results have been locked by the school administration. Please contact the school administration.',
                         locked: true,
                     });
                 }
@@ -1064,20 +1315,46 @@ exports.getStudentAcademicProfile = async (req, res) => {
                 };
             }
 
+            const caSubmitted =
+                grade.caSubmitted === true ||
+                (
+                    hasScore(grade.test1) &&
+                    hasScore(grade.test2) &&
+                    hasScore(grade.notes) &&
+                    hasScore(grade.oral)
+                );
+
+            const examSubmitted =
+                grade.examSubmitted === true || hasScore(grade.exam);
+
+            const complete = caSubmitted && examSubmitted;
+
+            const ca = caSubmitted
+                ? Number(grade.test1) +
+                  Number(grade.test2) +
+                  Number(grade.notes) +
+                  Number(grade.oral)
+                : null;
+
             subjectsMap[subjectId].terms[grade.term] = {
-                test1: grade.test1,
-                test2: grade.test2,
-                test3: grade.test3,
-                assignment: grade.assignment,
-                exam: grade.exam,
-                totalScore: grade.totalScore,
-                grade: grade.grade,
-                remark: grade.remark,
-                ca:
-                    (Number(grade.test1) || 0) +
-                    (Number(grade.test2) || 0) +
-                    (Number(grade.test3) || 0) +
-                    (Number(grade.assignment) || 0),
+                test1: grade.test1 ?? null,
+                test2: grade.test2 ?? null,
+                notes: grade.notes ?? null,
+                oral: grade.oral ?? null,
+
+                // Keep old fields available for legacy result views.
+                test3: grade.test3 ?? null,
+                assignment: grade.assignment ?? null,
+
+                exam: examSubmitted ? grade.exam : null,
+
+                ca,
+                caSubmitted,
+                examSubmitted,
+
+                totalScore: complete ? grade.totalScore : null,
+                grade: complete ? grade.grade : null,
+                remark: complete ? grade.remark : null,
             };
         });
 
@@ -1098,33 +1375,46 @@ exports.getStudentAcademicProfile = async (req, res) => {
             const second = sub.terms['Second Term'];
             const third = sub.terms['Third Term'];
 
-            const firstTermTotal = first ? first.totalScore : null;
-            const secondTermTotal = second ? second.totalScore : null;
-            const thirdTermTotal = third ? third.totalScore : null;
+            const firstTermTotal =
+                first?.totalScore ?? null;
+
+            const secondTermTotal =
+                second?.totalScore ?? null;
+
+            const thirdTermTotal =
+                third?.totalScore ?? null;
 
             let cumulativeSecond = null;
             let cumulativeThird = null;
             let annualAverage = null;
 
-            if (first && second) {
-                cumulativeSecond = first.totalScore + second.totalScore;
+            if (
+                firstTermTotal !== null &&
+                secondTermTotal !== null
+            ) {
+                cumulativeSecond =
+                    firstTermTotal + secondTermTotal;
             }
 
-            if (first && second && third) {
+            if (
+                firstTermTotal !== null &&
+                secondTermTotal !== null &&
+                thirdTermTotal !== null
+            ) {
                 cumulativeThird =
-                    first.totalScore +
-                    second.totalScore +
-                    third.totalScore;
+                    firstTermTotal +
+                    secondTermTotal +
+                    thirdTermTotal;
 
                 annualAverage = Number(
                     (cumulativeThird / 3).toFixed(1)
                 );
-            } else if (first && second) {
+            } else if (cumulativeSecond !== null) {
                 annualAverage = Number(
                     (cumulativeSecond / 2).toFixed(1)
                 );
-            } else if (first) {
-                annualAverage = first.totalScore;
+            } else if (firstTermTotal !== null) {
+                annualAverage = firstTermTotal;
             }
 
             let displayData = {};
@@ -1314,7 +1604,7 @@ exports.getAllGrades = async (req, res) => {
 exports.getTermStatuses = async (req, res) => {
     try {
         const academicYear =
-            req.query.academicYear || (await getCurrentAcademicYear());
+            req.query.academicYear || await getCurrentAcademicYear();
 
         if (!academicYear) {
             return res.status(400).json({
