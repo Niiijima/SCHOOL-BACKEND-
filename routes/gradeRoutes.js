@@ -1,3 +1,4 @@
+
 const express = require('express');
 const router = express.Router();
 
@@ -5,6 +6,7 @@ const gradeController = require('../controllers/gradeController');
 const { protect, restrictTo } = require('../middleware/auth');
 
 // ---------- Submit scores ----------
+
 router.post(
   '/submit-scores',
   protect,
@@ -19,11 +21,27 @@ router.post(
   gradeController.submitMultipleStudentScores
 );
 
+// CA submission - supports both endpoint names
+router.post(
+  '/ca',
+  protect,
+  restrictTo('admin', 'teacher'),
+  gradeController.submitCAScores
+);
+
 router.post(
   '/submit-ca',
   protect,
   restrictTo('admin', 'teacher'),
   gradeController.submitCAScores
+);
+
+// Exam submission - supports both endpoint names
+router.post(
+  '/exam',
+  protect,
+  restrictTo('admin', 'teacher'),
+  gradeController.submitExamScores
 );
 
 router.post(
@@ -34,6 +52,7 @@ router.post(
 );
 
 // ---------- Admin term controls ----------
+
 router.patch(
   '/admin/publish-results',
   protect,
@@ -63,6 +82,7 @@ router.get(
 );
 
 // ---------- Individual student result locks ----------
+
 router.patch(
   '/admin/student-result-lock',
   protect,
@@ -78,6 +98,7 @@ router.get(
 );
 
 // ---------- Reads ----------
+
 router.get(
   '/student/:studentId/academic-profile',
   protect,
